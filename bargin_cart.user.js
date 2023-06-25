@@ -5,7 +5,7 @@
 // @description  try to take over the world!
 // @author       You
 // @match        https://cart.jd.com/cart_index
-// @match        https://cart.taobao.com/cart.htm
+// @match        https://cart.taobao.com/cart.htm*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.2/rollups/md5.js
 // @connect      dingyue-api.smzdm.com
 // @grant        GM_xmlhttpRequest
@@ -46,6 +46,14 @@
             'getItem': function (checkbox){
                 return(checkbox.parentElement.parentElement.parentElement);
             }
+        },
+        'cart.taobao.com': {
+            'checkboxes': 'input[type=checkbox][name="items[]"]',
+            'checkedboxes': 'input[type=checkbox][name="items[]"][checked]',
+            'price': 'div.item-price',
+            'getItem': function (checkbox){
+                return(checkbox.parentElement.parentElement.parentElement.parentElement.parentElement);
+            }
         }
     }
 
@@ -56,7 +64,7 @@
     function appendPrice(item, response){
         var price_info = item.querySelector(hostSelector[window.location.host].price);
         response.data.tags.forEach(tag => {
-            var smzdm = document.createElement('p');
+            var smzdm = document.createElement('div');
             smzdm.className = "smzdm";
             var price = document.createElement('span');
             price.className = "smzdm price"
@@ -83,7 +91,7 @@
     function appendLandedPrice(item, response){
         var price_info = item.querySelector(hostSelector[window.location.host].price);
         if(response.data.rows){
-            var smzdm = document.createElement('p');
+            var smzdm = document.createElement('div');
             smzdm.className = "smzdm";
             smzdm.textContent = "落地价:¥";
             var landed_price = document.createElement('span');
@@ -157,7 +165,7 @@
         var item = hostSelector[window.location.host].getItem(checkbox);
         var url = item.querySelector('a').href;
         console.log(url);
-        if(item.querySelector('p.smzdm') === null){
+        if(item.querySelector('div.smzdm') === null){
             get_history_price(url, [item]);
             product_info(url, [item]);
         }
@@ -170,7 +178,7 @@
     console.log(checkboxes.length);
 
     checkboxes.forEach(function(checkbox) {
-        checkbox.addEventListener('click', function() {
+        checkbox.addEventListener('change', function() {
             if (this.checked) {
                 queryItemByCheckbox(this);
             }

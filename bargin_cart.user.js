@@ -1,10 +1,11 @@
 // ==UserScript==
-// @name         smzdm4jd
+// @name         bargin_cart
 // @namespace    http://tampermonkey.net/
 // @version      0.2
 // @description  try to take over the world!
 // @author       You
 // @match        https://cart.jd.com/cart_index
+// @match        https://cart.taobao.com/cart.htm
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.2/rollups/md5.js
 // @connect      dingyue-api.smzdm.com
 // @grant        GM_xmlhttpRequest
@@ -37,12 +38,23 @@
     `;
     document.head.appendChild(style);
 
+    const hostSelector = {
+        'cart.jd.com': {
+            'checkboxes': 'input[type=checkbox][name="checkItem"]',
+            'checkedboxes': 'input[type=checkbox][name="checkItem"][checked]',
+            'price': 'div.p-price',
+            'getItem': function (checkbox){
+                return(checkbox.parentElement.parentElement.parentElement);
+            }
+        }
+    }
+
     function currentTime(){
         return((Date.now() / 1000).toFixed(0) * 1000)
     };
 
     function appendPrice(item, response){
-        var price_info = item.querySelector('div.p-price')
+        var price_info = item.querySelector(hostSelector[window.location.host].price);
         response.data.tags.forEach(tag => {
             var smzdm = document.createElement('p');
             smzdm.className = "smzdm";
@@ -69,7 +81,7 @@
     };
 
     function appendLandedPrice(item, response){
-        var price_info = item.querySelector('div.p-price')
+        var price_info = item.querySelector(hostSelector[window.location.host].price);
         if(response.data.rows){
             var smzdm = document.createElement('p');
             smzdm.className = "smzdm";
@@ -141,37 +153,33 @@
     var get_history_price = buildSmzdmAPI("https://dingyue-api.smzdm.com/dingyue/get_price_historys", appendPrice)
     var product_info = buildSmzdmAPI("https://dingyue-api.smzdm.com/dingyue/product_info", appendLandedPrice)
 
+    function queryItemByCheckbox(checkbox){
+        var item = hostSelector[window.location.host].getItem(checkbox);
+        var url = item.querySelector('a').href;
+        console.log(url);
+        if(item.querySelector('p.smzdm') === null){
+            get_history_price(url, [item]);
+            product_info(url, [item]);
+        }
+    }
 
     window.addEventListener('load', function () {
 
 
-    var checkboxes = document.querySelectorAll('input[type=checkbox][name="checkItem"]');
+    var checkboxes = document.querySelectorAll(hostSelector[window.location.host].checkboxes);
     console.log(checkboxes.length);
 
     checkboxes.forEach(function(checkbox) {
         checkbox.addEventListener('click', function() {
             if (this.checked) {
-                var item = this.parentElement.parentElement.parentElement;
-                var url = item.querySelector('a').href;
-                console.log(url);
-                if(item.querySelector('p.smzdm') === null){
-                    get_history_price(url, [item]);
-                    product_info(url, [item]);
-                }
+                queryItemByCheckbox(this);
             }
         })
     });
 
-    var checked = document.querySelectorAll('input[type=checkbox][name="checkItem"][checked]');
+    var checked = document.querySelectorAll(hostSelector[window.location.host].checkedboxes);
     console.log(checked.length);
-    checked.forEach(function(checkbox) {
-        var item = checkbox.parentElement.parentElement.parentElement;
-        var url = item.querySelector('a').href;
-        if(item.querySelector('p.smzdm') === null){
-            get_history_price(url, [item]);
-            product_info(url, [item]);
-        }
-    });
+    checked.forEach(queryItemByCheckbox);
 
     })
 })();

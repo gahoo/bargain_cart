@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         smzdm4jd
 // @namespace    http://tampermonkey.net/
-// @version      0.1
+// @version      0.2
 // @description  try to take over the world!
 // @author       You
 // @match        https://cart.jd.com/cart_index
@@ -162,6 +162,16 @@
         })
     });
 
+    var checked = document.querySelectorAll('input[type=checkbox][name="checkItem"][checked]');
+    console.log(checked.length);
+    checked.forEach(function(checkbox) {
+        var item = checkbox.parentElement.parentElement.parentElement;
+        var url = item.querySelector('a').href;
+        if(item.querySelector('p.smzdm') === null){
+            get_history_price(url, [item]);
+            product_info(url, [item]);
+        }
+    });
 
     })
 })();

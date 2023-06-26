@@ -51,6 +51,7 @@
         },
         'cart.taobao.com': {
             'cart': '#J_OrderList',
+            'itemClass': 'J_ItemBody',
             'checkboxes': 'div.price-content',
             //'checkboxes': 'input[type=checkbox][name="items[]"]',
             'checkedboxes': 'input[type=checkbox][name="items[]"][checked]',
@@ -185,15 +186,8 @@
             for (const mutation of mutationList) {
                 if (mutation.type === "childList") {
                     mutation.addedNodes.forEach(function(node){
-                        if(node.nodeType == 1){
-                            var changed_checkbox = node.querySelectorAll(hostSelector[window.location.host].checkboxes);
-                            if(changed_checkbox.length > 0){
-                                changed_checkbox.forEach(function(checkbox){
-                                    // FIXME: nested childList result in redundance listeners being add.
-                                    addCheckBoxListener(checkbox);
-                                    return;
-                                });
-                            }
+                        if(node.nodeType == 1 && node.classList.contains(hostSelector[window.location.host].itemClass)){
+                            node.querySelectorAll(hostSelector[window.location.host].checkboxes).forEach(addCheckBoxListener);
                         }
                     })
                 }
@@ -224,7 +218,7 @@
     console.log(checked.length);
     checked.forEach(queryItemByCheckbox);
 
-    const cart_watcher = addCartWatcher(hostSelector[window.location.host].cart);
+    addCartWatcher(hostSelector[window.location.host].cart);
 
     })
 })();

@@ -2,8 +2,8 @@
 // @name         bargin_cart
 // @namespace    http://tampermonkey.net/
 // @version      0.2
-// @description  try to take over the world!
-// @author       You
+// @description  Find real bargain in the cart.
+// @author       Gahoo
 // @match        https://cart.jd.com/cart_index
 // @match        https://cart.taobao.com/cart.htm*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.2/rollups/md5.js

@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         bargin_cart
 // @namespace    http://tampermonkey.net/
-// @version      0.2
+// @version      0.3
 // @description  Find real bargain in the cart.
 // @author       Gahoo
 // @match        https://cart.jd.com/cart_index
 // @match        https://cart.taobao.com/cart.htm*
+// @match        https://t.jd.com/home/follow*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/3.1.2/rollups/md5.js
 // @connect      dingyue-api.smzdm.com
 // @grant        GM_xmlhttpRequest
@@ -35,6 +36,11 @@
           background-color: white ;
           z-index: 1 ;
       }
+
+      /* only for t.jd.com/home/follow */
+      div.p-price {
+          height: auto !important
+      }
     `;
     document.head.appendChild(style);
 
@@ -62,6 +68,15 @@
             'postAction': function(item){
                 //item.parentElement.parentElement.appendChild(item);
             }
+        },
+        't.jd.com': {
+            'cart': 'div.mf-goods-list',
+            'checkedboxes': 'div.p-price',
+            'price': 'div.p-price',
+            'getItem': function (checkbox){
+                return(checkbox.parentElement.parentElement);
+            },
+            'postAction': function(item){}
         }
     }
 

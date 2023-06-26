@@ -40,19 +40,26 @@
 
     const hostSelector = {
         'cart.jd.com': {
+            'cart': '#cart-body',
             'checkboxes': 'input[type=checkbox][name="checkItem"]',
             'checkedboxes': 'input[type=checkbox][name="checkItem"][checked]',
             'price': 'div.p-price',
             'getItem': function (checkbox){
                 return(checkbox.parentElement.parentElement.parentElement);
-            }
+            },
+            'postAction': function(item){}
         },
         'cart.taobao.com': {
-            'checkboxes': 'input[type=checkbox][name="items[]"]',
+            'cart': '#J_OrderList',
+            'checkboxes': 'div.price-content',
+            //'checkboxes': 'input[type=checkbox][name="items[]"]',
             'checkedboxes': 'input[type=checkbox][name="items[]"][checked]',
-            'price': 'div.item-price',
+            'price': 'div.price-content',
             'getItem': function (checkbox){
                 return(checkbox.parentElement.parentElement.parentElement.parentElement.parentElement);
+            },
+            'postAction': function(item){
+                //item.parentElement.parentElement.appendChild(item);
             }
         }
     }
@@ -169,25 +176,55 @@
             get_history_price(url, [item]);
             product_info(url, [item]);
         }
+        hostSelector[window.location.host].postAction(item);
+    }
+
+    function addCartWatcher(cart){
+        const cart_node = document.querySelector(cart);
+        const callback = (mutationList, observer) => {
+            for (const mutation of mutationList) {
+                if (mutation.type === "childList") {
+                    mutation.addedNodes.forEach(function(node){
+                        if(node.nodeType == 1){
+                            var changed_checkbox = node.querySelectorAll(hostSelector[window.location.host].checkboxes);
+                            if(changed_checkbox.length > 0){
+                                changed_checkbox.forEach(function(checkbox){
+                                    // FIXME: nested childList result in redundance listeners being add.
+                                    addCheckBoxListener(checkbox);
+                                    return;
+                                });
+                            }
+                        }
+                    })
+                }
+            }
+        }
+        const cart_observer = new MutationObserver(callback);
+        cart_observer.observe(cart_node, {childList: true, subtree: true});
+        return(cart_observer);
+    }
+
+    function addCheckBoxListener(checkbox){
+        checkbox.addEventListener('click', function() {
+            if((this.tagName == 'INPUT' && this.checked) || this.tagName == 'DIV') {
+                queryItemByCheckbox(this);
+            }
+        })
     }
 
     window.addEventListener('load', function () {
 
-
     var checkboxes = document.querySelectorAll(hostSelector[window.location.host].checkboxes);
     console.log(checkboxes.length);
 
-    checkboxes.forEach(function(checkbox) {
-        checkbox.addEventListener('change', function() {
-            if (this.checked) {
-                queryItemByCheckbox(this);
-            }
-        })
-    });
+    checkboxes.forEach(addCheckBoxListener);
+
 
     var checked = document.querySelectorAll(hostSelector[window.location.host].checkedboxes);
     console.log(checked.length);
     checked.forEach(queryItemByCheckbox);
+
+    const cart_watcher = addCartWatcher(hostSelector[window.location.host].cart);
 
     })
 })();

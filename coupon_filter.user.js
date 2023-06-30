@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         coupon_filter
 // @namespace    http://tampermonkey.net/
-// @version      0.1
+// @version      0.2
 // @description  filter item by coupons
 // @author       Gahoo
 // @match        https://cart.jd.com/cart_index
@@ -11,6 +11,7 @@
 
 (function() {
     'use strict';
+    const INTERVAL = 800; //millisecond
     var style = document.createElement("style");
     style.type = "text/css";
     style.innerHTML = `
@@ -51,6 +52,10 @@
 
     div.coupon-item.has-items {
        cursor: pointer;
+    }
+
+    .has-no-overlap-items {
+       opacity: 0.5;
     }
 
     .has-overlap-items {
@@ -112,9 +117,6 @@
         const notification = document.createElement("div");
         notification.textContent = text;
         notification.classList.add("cart-filter-top-popup");
-        //notification.style.position = "fixed";
-        //notification.style.top = "8px";
-        //notification.style.right = "8px";
 
         // Fade out the notification after 5 seconds.
         setTimeout(() => {
@@ -155,7 +157,7 @@
                 TheSkus.push({"cid": item.cid, "type": sorted.itemType, "Id": item.Id, "skuUuid": item.skuUuid, "useUuid": item.useUuid});
             }
         })
-        console.log(TheSkus)
+        //console.log(TheSkus)
 
         body.operations.push({"TheSkus": TheSkus})
 
@@ -208,17 +210,119 @@
         return(Array.from(new Set(array1.concat(array2))));
     }
 
-    function createCouponDiv(coupons, extra_class){
-        function getItemIds(items){
-            var item_ids = [];
-            if(items){
-                items.forEach(function(item){
-                    item_ids.push(item.id.toString());
-                })
-            }
-            return(item_ids)
+    function getItemIds(items){
+        var item_ids = [];
+        if(items){
+            items.forEach(function(item){
+                item_ids.push(item.id.toString());
+            })
         }
+        return(item_ids)
+    }
 
+    function appendCouponItems(coupon_div, items){
+        var item_ids = coupon_div.dataset.items.split(',');
+        item_ids = unionArray(item_ids, getItemIds(items))
+        coupon_div.dataset.items = item_ids.join(',').replace(/^,/, "");
+        if(coupon_div.dataset.items && !coupon_div.classList.contains('has-items')){
+            coupon_div.classList.add('has-items')
+        }
+    }
+
+    function setCouponItems(coupon_div, items){
+        coupon_div.dataset.items = getItemIds(items).join(',');
+        if(coupon_div.dataset.items){
+            coupon_div.classList.add('has-items')
+        }
+    }
+
+    function createCouponDiscountSpan(coupon){
+        var discount = document.createElement('span')
+        discount.className = "coupon-item discount"
+        if(coupon.discount){
+            discount.style.width = Math.round(100 * coupon.discount / coupon.quota) + "%";
+        }else{
+            discount.style.width = (coupon.preciseDiscount * 100) + "%";
+        }
+        return(discount)
+    }
+
+    function setCouponText(coupon_div, coupon){
+        if(coupon.discount){
+            coupon_div.textContent = coupon.quota + ' - ' + coupon.discount;
+        }else{
+            coupon_div.textContent = coupon.discountDesc;
+        }
+    }
+
+    function setCouponStyleClass(coupon_div, coupon){
+        switch(coupon.couponIconStyle){
+            case "店铺东券":
+                coupon_div.classList.add('D_shop');
+                break;
+            case "限品类东券":
+                coupon_div.classList.add('D_limited');
+                break;
+            case "全品类东券":
+                coupon_div.classList.add('D_all');
+                break;
+            default:
+                coupon_div.classList.add(coupon.couponIconStyle);
+        }
+        //console.log(coupon.couponIconStyle);
+        if(coupon.plusStyle){
+            coupon_div.classList.add('plus');
+        }
+    }
+
+    function toggleCouponChosenClass(coupon_div){
+        if(coupon_div.classList.contains("chosen")){
+            coupon_div.classList.remove("chosen");
+        }else{
+            coupon_div.classList.add("chosen");
+        }
+    }
+
+    function hideUnchosenCouponItems(){
+        removeClassFromSelected('.item-item.hidden', 'hidden')
+        removeClassFromSelected('.item-suit.hidden', 'hidden')
+        var item_ids = [];
+        document.querySelectorAll('.chosen').forEach(function(chosen, i){
+            var chosen_item_ids = chosen.dataset.items.split(',');
+            //OR
+            //item_ids = unionArray(item_ids, chosen_item_ids);
+            //AND
+            if(i == 0){
+                item_ids = chosen_item_ids;
+                return
+            }else{
+                item_ids = intersectArray(item_ids, chosen_item_ids)
+            }
+        });
+
+        if(document.querySelectorAll('.chosen').length > 0){
+            addClassToSelected('.item-item', 'hidden')
+            addClassToSelected('.item-suit', 'hidden')
+        }
+        if(item_ids.length){
+            removeClassByIds(item_ids, 'hidden');
+        }
+        return(item_ids)
+    }
+
+    function greyoutNotOverlapCoupons(item_ids){
+        removeClassFromSelected('div.coupon-item.has-no-overlap-items', 'has-no-overlap-items');
+        if(item_ids.length > 0 && document.querySelectorAll('.chosen').length > 0){
+            document.querySelectorAll('div.coupon-item').forEach(function(coupon_div){
+                var coupon_item_ids = coupon_div.dataset.items.split(',');
+                if(intersectArray(item_ids, coupon_item_ids).length == 0){
+                    coupon_div.classList.add('has-no-overlap-items')
+                }
+            });
+        }
+    }
+
+    function createCouponDiv(coupons, extra_class){
         if(!coupons){
             return
         }
@@ -226,110 +330,39 @@
         coupons.forEach(function(coupon){
             var coupon_div = document.getElementById(coupon.couponId);
             if(coupon_div){
-                var item_ids = coupon_div.dataset.items.split(',');
-                item_ids = item_ids.concat(getItemIds(coupon.items));
-                item_ids = Array.from(new Set(item_ids))
-                coupon_div.dataset.items = item_ids.join(',').replace(/^,/, "");
-                if(coupon_div.dataset.items && !coupon_div.classList.contains('has-items')){
-                    coupon_div.classList.add('has-items')
-                }
+                appendCouponItems(coupon_div, coupon.items);
                 return
             }else{
                 coupon_div = document.createElement('div');
             }
             coupon_div.className = "coupon-item";
-            coupon_div.classList.add(extra_class)
+            coupon_div.classList.add(extra_class);
             coupon_div.id = coupon.couponId;
             coupon_div.title = coupon.name;
-            if(coupon.discount){
-                coupon_div.textContent = coupon.quota + ' - ' + coupon.discount;
-            }else{
-                coupon_div.textContent = coupon.discountDesc;
-            }
+            setCouponText(coupon_div, coupon);
+
             coupon_div.dataset.overLap = coupon.overLap;
             coupon_div.dataset.type = coupon.type;
             coupon_div.dataset.plusStyle = coupon.plusStyle;
             coupon_div.dataset.couponIconStyle = coupon.couponIconStyle;
-            switch(coupon.couponIconStyle){
-                case "店铺东券":
-                    coupon_div.classList.add('D_shop');
-                    break;
-                case "限品类东券":
-                    coupon_div.classList.add('D_limited');
-                    break;
-                case "全品类东券":
-                    coupon_div.classList.add('D_all');
-                    break;
-                default:
-                    coupon_div.classList.add(coupon.couponIconStyle);
-            }
+            setCouponStyleClass(coupon_div, coupon)
+
             coupon_div.dataset.beginTime = coupon.beginTime;
             coupon_div.dataset.endTime = coupon.endTime;
+            coupon_div.dataset.quota = coupon.quota;
             coupon_div.dataset.discount = coupon.discount;
             if(coupon.discountDesc){
                 coupon_div.dataset.discountDesc = coupon.discountDesc;
             }
-            coupon_div.dataset.quota = coupon.quota;
-            console.log(coupon.couponIconStyle);
-            if(coupon.plusStyle){
-                coupon_div.classList.add('plus');
-            }
 
-            coupon_div.dataset.items = getItemIds(coupon.items).join(',');
-            if(coupon_div.dataset.items){
-                coupon_div.classList.add('has-items')
-            }
+            setCouponItems(coupon_div, coupon.items);
 
-            coupon_div.dataset.width = Math.round(100 * coupon.discount / coupon.quota);
-            var discount = document.createElement('span')
-            discount.className = "coupon-item discount"
-            if(coupon.discount){
-                discount.style.width = Math.round(100 * coupon.discount / coupon.quota) + "%";
-            }else{
-                discount.style.width = (coupon.preciseDiscount * 100) + "%";
-            }
-            coupon_div.appendChild(discount)
+            coupon_div.appendChild(createCouponDiscountSpan(coupon));
 
             coupon_div.addEventListener('click', function(){
-                if(this.classList.contains("chosen")){
-                    this.classList.remove("chosen");
-                }else{
-                    this.classList.add("chosen");
-                }
-
-                removeClassFromSelected('.item-item.hidden', 'hidden')
-                removeClassFromSelected('.item-suit.hidden', 'hidden')
-                var item_ids = [];
-                document.querySelectorAll('.chosen').forEach(function(chosen, i){
-                    var chosen_item_ids = chosen.dataset.items.split(',');
-                    //OR
-                    //item_ids = unionArray(item_ids, chosen_item_ids);
-                    //AND
-                    if(i == 0){
-                        item_ids = chosen_item_ids;
-                        return
-                    }else{
-                        item_ids = intersectArray(item_ids, chosen_item_ids)
-                    }
-                });
-
-                if(document.querySelectorAll('.chosen').length > 0){
-                    addClassToSelected('.item-item', 'hidden')
-                    addClassToSelected('.item-suit', 'hidden')
-                }
-                if(item_ids.length){
-                    removeClassByIds(item_ids, 'hidden');
-                }
-
-                removeClassFromSelected('div.coupon-item.has-overlap-items', 'has-overlap-items');
-                if(item_ids.length > 0 && document.querySelectorAll('.chosen').length > 0){
-                    document.querySelectorAll('div.coupon-item').forEach(function(coupon_div){
-                    var coupon_item_ids = coupon_div.dataset.items.split(',');
-                    if(intersectArray(item_ids, coupon_item_ids).length > 0){
-                        coupon_div.classList.add('has-overlap-items')
-                    }
-                });
-                }
+                toggleCouponChosenClass(this);
+                var chosen_coupon_items = hideUnchosenCouponItems();
+                greyoutNotOverlapCoupons(chosen_coupon_items);
             })
 
             document.querySelector('div.coupon-filter').appendChild(coupon_div);
@@ -377,7 +410,7 @@
                   setTimeout(() => {
                       console.log(vendor.vendorId)
                       cartCouponList(vendor);
-                  }, i* 800);
+                  }, i* INTERVAL);
             }
         })
     }
@@ -390,10 +423,8 @@
         if(!this.parentElement.querySelector('div.coupon-filter')){
             var filter_box = document.createElement('div');
             filter_box.className = 'coupon-filter';
-            filter_box.textContent = '优惠券过滤器';
             this.insertAdjacentElement('afterend', filter_box);
         }
-        //cartCouponList(173921)
         getCurrentCartCoupon(null)
     })
     });

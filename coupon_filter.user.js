@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         coupon_filter
 // @namespace    http://tampermonkey.net/
-// @version      0.3
+// @version      0.4
 // @description  filter item by coupons
 // @author       Gahoo
 // @match        https://cart.jd.com/cart_index
@@ -16,6 +16,9 @@
     var style = document.createElement("style");
     style.type = "text/css";
     style.innerHTML = `
+    .cart-filter-bar {
+       margin-bottom: 4px;
+    }
     div.coupon-item {
        max-width: 200px;
        margin: 4px;
@@ -56,6 +59,14 @@
     }
 
     a.coupon-plan-destroyer{
+       cursor: pointer;
+    }
+
+    div.promotion-item.chosen {
+       border-width: medium;
+    }
+
+    div.promotion-item {
        cursor: pointer;
     }
 
@@ -157,6 +168,48 @@
         position: fixed;
         left: 20px;
         top: 150px;
+    }
+
+    div.promotion-filter {
+        display: flex;
+        flex-wrap: wrap;
+        flex-direction: row;
+    }
+
+    div.promotion-item {
+       max-width: 300px;
+       margin: 4px;
+       position: relative;
+       border-width: 1px;
+       border-style: solid;
+    }
+
+    div.promotion-item.shop-off {
+       background-color: #beb3dd;
+    }
+
+    div.promotion-item.cross-shop-off{
+        background-color: #baecb8;
+    }
+
+    div.promotion-item.corss-jd-shop-off{
+        background-color: #f5fbb1;
+    }
+
+    div.promotion-item.gift{
+        background-color: #ddb3b3;
+    }
+
+    div.promotion-item.regex-gift{
+        border-style: dotted;
+    }
+
+    div.promotion-item.regex-off{
+        border-style: dashed;
+    }
+
+    div.promotion-item.regex-every-off{
+        border-color: gold;
     }
     `;
     document.head.appendChild(style);
@@ -364,10 +417,10 @@
         return(item_ids)
     }
 
-    function greyoutNotOverlapCoupons(item_ids){
-        removeClassFromSelected('div.coupon-item.has-no-overlap-items', 'has-no-overlap-items');
+    function greyoutNotOverlap(item_ids, selector){
+        removeClassFromSelected('.has-no-overlap-items', 'has-no-overlap-items');
         if(item_ids.length > 0 && document.querySelectorAll('.chosen').length > 0){
-            document.querySelectorAll('div.coupon-item').forEach(function(coupon_div){
+            document.querySelectorAll(selector).forEach(function(coupon_div){
                 var coupon_item_ids = coupon_div.dataset.items.split(',');
                 if(intersectArray(item_ids, coupon_item_ids).length == 0){
                     coupon_div.classList.add('has-no-overlap-items')
@@ -416,7 +469,7 @@
             coupon_div.addEventListener('click', function(){
                 toggleCouponChosenClass(this);
                 var chosen_coupon_items = hideUnchosenCouponItems();
-                greyoutNotOverlapCoupons(chosen_coupon_items);
+                greyoutNotOverlap(chosen_coupon_items, 'div.coupon-item, div.promotion-item');
             })
 
             document.querySelector('div.coupon-filter').appendChild(coupon_div);
@@ -433,11 +486,11 @@
     }
 
     function getItemSum(item){
-        return(Number(getItemTextOf(item, '.p-sum').replace('¥', '')));
+        return(Number(getItemTextOf(item, '.p-sum').replace('¥', '').replace('￥', '')));
     }
 
     function getItemPrice(item){
-        return(Number(getItemTextOf(item, '.p-price').replace('¥', '')));
+        return(Number(getItemTextOf(item, '.p-price').replace('¥', '').replace('￥', '')));
     }
 
     function createItemPlan(item){
@@ -527,7 +580,7 @@
         var inner_html = '';
         var terms = [];
         [].slice.call(plan_item_list.children).forEach(function(item){
-            let price = Math.round(100 * item.dataset.price.replace('￥', '') * percentage) / 100;
+            let price = Math.round(100 * item.dataset.price.replace('¥', '').replace('￥', '') * percentage) / 100;
             let quantity = item.dataset.quantity;
             if(quantity > 1){
                 terms.push('<strong>' + price + '</strong>×' + quantity);
@@ -583,7 +636,6 @@
                     continue;
                 }else{
                     balance += getItemSum(item);
-                    console.log(balance);
                     plan_items.push(item);
                 }
             }
@@ -683,6 +735,21 @@
         return(plan_item_list)
     }
 
+    function getPromotionVendors(promotion_vendor){
+        var vendors = [];
+        promotion_vendor.sorted.forEach(function(sorted){
+            if(sorted.item.items.length){
+                new Set(sorted.item.items.map(x => x.item.vendorId)).forEach(function(vendorId){
+                    var filtered_items = sorted.item.items.filter(x => x.item.vendorId == vendorId);
+                    vendors.push({"vendorId": vendorId, "sorted": [{"item": {"items": filtered_items}}]})
+                })
+            }else{
+                vendors.push({"vendorId": sorted.item.vendorId, "sorted": [sorted]})
+            }
+        })
+        return(vendors)
+    }
+
     function buildJdAPI(functionId, appid, bodyBuilder, callback){
         return function(args){
             var data = {
@@ -714,6 +781,7 @@
     var cartCouponList = buildJdAPI('pcCart_jc_cartCouponList', 'JDC_mall_cart', buildCouponListBody, appendCoupon)
 
     function getAllVenderCoupons(response){
+        var promotion_vendors = [];
         response.resultData.cartInfo.vendors.forEach(function(vendor, i){
             if(vendor.hasCoupon){
                   setTimeout(() => {
@@ -721,10 +789,109 @@
                       cartCouponList(vendor);
                   }, i* INTERVAL);
             }
+            //FIXME negative vendorId means it's a Promotion and can't use cartCouponList to fetch item coupons;
+            if(vendor.vendorId < 0){
+                promotion_vendors = [...promotion_vendors, ...getPromotionVendors(vendor)]
+            }
+        })
+        promotion_vendors.forEach(function(vendor, i){
+            setTimeout(() => {
+                console.log(vendor.vendorId)
+                cartCouponList(vendor);
+            }, (response.resultData.cartInfo.vendors.length + i) * INTERVAL);
         })
     }
 
-    var getCurrentCartCoupon = buildJdAPI('pcCart_jc_getCurrentCart', 'JDC_mall_cart', buildCurrentCartBody, getAllVenderCoupons)
+
+    function appendPromotionItems(promotion_div, item_id){
+        promotion_div.dataset.items = promotion_div.dataset.items + ',' + item_id;
+    }
+
+    function createPromotionDiv(item){
+        if(!item.canSelectPromotions){
+            return
+        }
+
+        item.canSelectPromotions.forEach(function(promotion){
+            var promotion_div = document.getElementById(promotion.id);
+            if(promotion_div){
+                appendPromotionItems(promotion_div, item.Id);
+                return
+            }else{
+                promotion_div = document.createElement('div');
+            }
+            promotion_div.className = 'promotion-item';
+            promotion_div.id = promotion.id;
+            promotion_div.title = promotion.title;
+            promotion_div.textContent = promotion.title;
+            addClassByTextContentRegex(promotion_div, /满.*(减|折)/g, 'regex-off')
+            addClassByTextContentRegex(promotion_div, /赠/g, 'regex-gift')
+            addClassByTextContentRegex(promotion_div, /每满/g, 'regex-every-off')
+            promotion_div.dataset.suitType = promotion.type;
+            promotion_div.dataset.items = item.Id
+
+            promotion_div.addEventListener('click', function(){
+                toggleCouponChosenClass(this);
+                var chosen_coupon_items = hideUnchosenCouponItems();
+                greyoutNotOverlap(chosen_coupon_items, 'div.coupon-item, div.promotion-item');
+            })
+            document.querySelector('div.promotion-filter').appendChild(promotion_div);
+        });
+
+    }
+
+    function addExtraInfoToPromotion(promotionId, suit){
+        var promotion_div = document.getElementById(promotionId);
+        var suit_classes = {
+            "满减": "shop-off",
+            "满送": "gift",
+            "跨店铺满减": "cross-shop-off",
+            "跨自营/店铺满折": "corss-jd-shop-off"
+        }
+        promotion_div.dataset.suitLabel = suit.suitLabel;
+        promotion_div.dataset.STip = suit.STip;
+        promotion_div.textContent = suit.STip;
+        if(suit_classes[suit.suitLabel]){
+            promotion_div.classList.remove('regex-off');
+            promotion_div.classList.remove('regex-gift');
+            promotion_div.classList.add(suit_classes[suit.suitLabel]);
+        }
+    }
+
+    function addClassByTextContentRegex(element, regex, class_to_add){
+        if(regex.test(element.textContent)){
+            element.classList.add(class_to_add);
+        }
+    }
+
+    function getAllVenderPromotions(response){
+        response.resultData.cartInfo.vendors.forEach(function(vendor, i){
+            vendor.sorted.forEach(function(sorted){
+                if(sorted.item.items.length){
+                    sorted.item.items.forEach(function(item){
+                        if(item.item.canSelectPromotions){
+                            createPromotionDiv(item.item);
+                        }
+                    })
+                    if(sorted.item.promotionId){
+                        addExtraInfoToPromotion(sorted.item.promotionId, {
+                            'STip': sorted.item.STip,
+                            'suitType': sorted.item.suitType,
+                            'suitLabel': sorted.item.suitLabel,
+                        })
+                    }
+                }else{
+                    var item = sorted.item;
+                    createPromotionDiv(item.canSelectPromotions);
+                }
+        })
+        });
+    }
+
+    var getCurrentCart = buildJdAPI('pcCart_jc_getCurrentCart', 'JDC_mall_cart', buildCurrentCartBody, function(response){
+        getAllVenderPromotions(response)
+        getAllVenderCoupons(response)
+    })
 
     window.addEventListener('load', function () {
 
@@ -735,11 +902,18 @@
 
     get_coupon_list_button.addEventListener('click', function () {
         if(!this.parentElement.querySelector('div.coupon-filter')){
-            var filter_box = document.createElement('div');
-            filter_box.className = 'coupon-filter';
-            this.insertAdjacentElement('afterend', filter_box);
+            var coupon_box = document.createElement('div');
+            coupon_box.className = 'coupon-filter';
+            this.insertAdjacentElement('afterend', coupon_box);
         }
-        getCurrentCartCoupon(null)
+
+        if(!this.parentElement.querySelector('div.promotion-filter')){
+            var promotion_box = document.createElement('div');
+            promotion_box.className = 'promotion-filter';
+            this.insertAdjacentElement('afterend', promotion_box);
+        }
+
+        getCurrentCart(null)
 
         if(!this.parentElement.querySelector('div.coupon-planer')){
             var planer_box = document.createElement('div');
@@ -755,7 +929,7 @@
             var plan_button = document.createElement('button');
             plan_button.textContent = '生成用券方案';
             plan_button.addEventListener('click', function(){
-                if(document.querySelectorAll('div.coupon-item.chosen').length == 0){
+                if(document.querySelectorAll('div.chosen').length == 0){
                     notify("请先选择要使用的券")
                     return
                 }

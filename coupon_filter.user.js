@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         coupon_filter
 // @namespace    http://tampermonkey.net/
-// @version      0.4
+// @version      0.5
 // @description  filter item by coupons
 // @author       Gahoo
 // @match        https://cart.jd.com/cart_index
@@ -211,6 +211,20 @@
     div.promotion-item.regex-every-off{
         border-color: gold;
     }
+
+    input.price-filter.low {
+        width: 40px;
+        position: relative;
+        left: -48px;
+        top: 14px;
+    }
+
+    input.price-filter.high {
+        width: 40px;
+        position: relative;
+        right: 36px;
+        top: 14px;
+    }
     `;
     document.head.appendChild(style);
 
@@ -286,9 +300,9 @@
         console.log(response.response)
     }
 
-    function addClassToSelected(selector, class_to_add){
+    function addClassToSelected(selector, class_to_add, condition = function(item){return(true)}){
         document.querySelectorAll(selector).forEach(function(item){
-            if(!item.classList.contains(class_to_add)){
+            if(!item.classList.contains(class_to_add) && condition(item)){
                 item.classList.add(class_to_add)
             }
         })
@@ -472,6 +486,7 @@
             coupon_div.addEventListener('click', function(){
                 toggleCouponChosenClass(this);
                 var chosen_coupon_items = hideUnchosenCouponItems();
+                applyPriceFilter()
                 greyoutNotOverlap(chosen_coupon_items, 'div.coupon-item, div.promotion-item');
             })
 
@@ -484,20 +499,24 @@
         createCouponDiv(response.resultData.usableCoupons, "usable")
     }
 
+    function formatNumber(number_string){
+        return(Number(number_string.replace('¥', '').replace('￥', '').replace(',', '')))
+    }
+
     function getItemTextOf(item, selector){
         return(item.querySelector(selector).textContent);
     }
 
     function getItemSum(item){
-        var sum = Number(getItemTextOf(item, '.p-sum').replace('¥', '').replace('￥', ''));
+        var sum = formatNumber(getItemTextOf(item, '.p-sum'));
         if(sum == 0){
-            sum = Number(getItemTextOf(item.parentElement, '.p-sum').replace('¥', '').replace('￥', ''));
+            sum = formatNumber(getItemTextOf(item.parentElement, '.p-sum'));
         }
         return(sum);
     }
 
     function getItemPrice(item){
-        return(Number(getItemTextOf(item, '.p-price > span').replace('¥', '').replace('￥', '')));
+        return(formatNumber(getItemTextOf(item, '.p-price span[class="p-price-cont"],[class="project-price"]')));
     }
 
     function getItemUnitPrice(item){
@@ -508,6 +527,10 @@
         }else if(item.parentElement.querySelector('.p-price-cont')){
             return(item.parentElement.querySelector('.p-price-cont').textContent)
         }
+    }
+
+    function getItemUnitPriceNumber(item){
+        return(formatNumber(getItemUnitPrice(item)))
     }
 
     function getItemQuantity(item){
@@ -602,7 +625,7 @@
         var inner_html = '';
         var terms = [];
         [].slice.call(plan_item_list.children).forEach(function(item){
-            let price = Math.round(100 * item.dataset.price.replace('¥', '').replace('￥', '') * percentage) / 100;
+            let price = Math.round(100 * formatNumber(item.dataset.price) * percentage) / 100;
             let quantity = item.dataset.quantity;
             if(quantity > 1){
                 terms.push('<strong>' + price + '</strong>×' + quantity);
@@ -862,6 +885,7 @@
             promotion_div.addEventListener('click', function(){
                 toggleCouponChosenClass(this);
                 var chosen_coupon_items = hideUnchosenCouponItems();
+                applyPriceFilter()
                 greyoutNotOverlap(chosen_coupon_items, 'div.coupon-item, div.promotion-item');
             })
             document.querySelector('div.promotion-filter').appendChild(promotion_div);
@@ -922,6 +946,54 @@
         getAllVenderCoupons(response)
     })
 
+    function applyPriceFilter(){
+        var low_bound = Number(document.querySelector('.price-filter.low').value)
+        var high_bound = Number(document.querySelector('.price-filter.high').value)
+        removeClassFromSelected('.item-item.not-in-range', 'hidden')
+        removeClassFromSelected('.item-suit.not-in-range', 'hidden')
+        removeClassFromSelected('.item-item.not-in-range', 'not-in-range')
+        removeClassFromSelected('.item-suit.not-in-range', 'not-in-range')
+        addClassToSelected('.item-item:not(.hidden)', 'not-in-range', function(item){
+            var price = getItemUnitPriceNumber(item);
+            return(low_bound > price || high_bound < price)
+        })
+        addClassToSelected('.item-suit:not(.hidden)', 'not-in-range', function(item){
+                var price = getItemUnitPriceNumber(item);
+                return(low_bound > price || high_bound < price)
+        })
+        addClassToSelected('.item-item.not-in-range', 'hidden')
+        addClassToSelected('.item-suit.not-in-range', 'hidden')
+        updateListedItemCounts()
+    }
+
+    function appendPriceFilter(){
+        var price_column = document.querySelector('.column.t-price');
+        var price_filter_low = document.createElement('input');
+        var price_filter_high = document.createElement('input');
+        price_filter_low.className = 'price-filter low';
+        price_filter_high.className = 'price-filter high';
+        price_filter_low.value = 0;
+        price_filter_high.value = [].slice.call(
+            document.querySelectorAll('.p-price span[class="p-price-cont"],[class="project-price"]'))
+            .map(x => formatNumber(x.textContent))
+            .reduce((prev, current) => {return Math.max(prev, current);});
+        price_filter_low.addEventListener("input", applyPriceFilter);
+        price_filter_high.addEventListener("input", applyPriceFilter);
+        price_column.appendChild(price_filter_low);
+        price_column.appendChild(price_filter_high);
+    }
+
+    function appendListedItemCounts(){
+        var item_counts = document.createElement('span');
+        item_counts.className = "listed-number";
+        document.querySelector('.switch-cart-item > a').appendChild(item_counts);
+        updateListedItemCounts();
+    }
+
+    function updateListedItemCounts(){
+        document.querySelector('.listed-number').textContent = '(' + document.querySelectorAll('.item-item:not(.hidden)').length + ')';
+    }
+
     window.addEventListener('load', function () {
 
     var get_coupon_list_button = document.createElement('button');
@@ -976,6 +1048,9 @@
             planer_box.appendChild(plan_button)
         }
     })
+
+    appendPriceFilter();
+    appendListedItemCounts();
     });
 
 })();

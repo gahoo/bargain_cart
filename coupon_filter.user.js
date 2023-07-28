@@ -306,6 +306,9 @@
             if(item){
                 item.classList.remove(class_to_remove);
             }
+            if(item.parentElement.classList.contains('item-suit')){
+                item.parentElement.classList.remove(class_to_remove);
+            }
         })
     }
 
@@ -486,11 +489,33 @@
     }
 
     function getItemSum(item){
-        return(Number(getItemTextOf(item, '.p-sum').replace('¥', '').replace('￥', '')));
+        var sum = Number(getItemTextOf(item, '.p-sum').replace('¥', '').replace('￥', ''));
+        if(sum == 0){
+            sum = Number(getItemTextOf(item.parentElement, '.p-sum').replace('¥', '').replace('￥', ''));
+        }
+        return(sum);
     }
 
     function getItemPrice(item){
-        return(Number(getItemTextOf(item, '.p-price').replace('¥', '').replace('￥', '')));
+        return(Number(getItemTextOf(item, '.p-price > span').replace('¥', '').replace('￥', '')));
+    }
+
+    function getItemUnitPrice(item){
+        if(item.querySelector('.p-price-cont')){
+            return(item.querySelector('.p-price-cont').textContent);
+        }else if(item.querySelector('.project-price')){
+            return(item.querySelector('.project-price').textContent);
+        }else if(item.parentElement.querySelector('.p-price-cont')){
+            return(item.parentElement.querySelector('.p-price-cont').textContent)
+        }
+    }
+
+    function getItemQuantity(item){
+        if(item.querySelector('.quantity')){
+            return(item.querySelector('.quantity').querySelector('input').value);
+        }else if(item.parentElement.querySelector('.quantity')){
+            return(item.parentElement.querySelector('.quantity').querySelector('input').value)
+        }
     }
 
     function createItemPlan(item){
@@ -499,13 +524,9 @@
         item_a.href = "#" + item.id;
         item_a.dataset.id = item.id;
         item_a.dataset.skuuuid = item.dataset.skuuuid;
-        item_a.dataset.quantity = item.querySelector('.quantity').querySelector('input').value;
-        if(item.querySelector('.p-price-cont')){
-            item_a.dataset.price = item.querySelector('.p-price-cont').textContent;
-        }else{
-            item_a.dataset.price = item.querySelector('.project-price').textContent;
-        }
-        item_a.dataset.sum = item.querySelector('.p-sum').textContent;
+        item_a.dataset.quantity = getItemQuantity(item)
+        item_a.dataset.price = getItemUnitPrice(item);
+        item_a.dataset.sum = getItemSum(item);
         var ref = item.querySelector('.p-img > a');
         item_a.title = ref.title;
         var img = ref.querySelector('img');
@@ -569,9 +590,10 @@
             note.innerHTML = '<span class="coupon-plan-note reamin">还需要凑单<strong>' + remaining + '</strong>元</span>';
         }else if(remaining < 0){
             var percentage = Math.round(100 * (balance - discount) / balance)/ 100;
+            var total_price = Math.round(100 * (balance - discount) / 100);
             note.innerHTML = '<span class="coupon-plan-note remain">超出了<strong>' + Math.abs(remaining) + '</strong>元</span>' +
                 '<span class="coupon-plan-note discount">相当于<strong>' + percentage + '</strong>折</span>' +
-                createDetailNotesSpan(plan_item_list, percentage, balance - discount);
+                createDetailNotesSpan(plan_item_list, percentage, total_price);
         }
         return(note)
     }
@@ -689,6 +711,13 @@
             return(getItemSum(a) < getItemSum(b) ? 1 : -1);
         }).filter(function(item){
             return(!checked_items.map(function(i){return(i.id)}).includes(item.id));
+        }).filter(function(item){
+            var check_box = item.querySelector('input[name="checkItem"]');
+            if(check_box){
+                return(!item.querySelector('input[name="checkItem"]').disabled)
+            }else{
+                return(true)
+            }
         });
 
         var balance = 0;
@@ -769,7 +798,7 @@
                 responseType: "json",
                 onload: function(response){
                     if(response.response === undefined || response.response.code){
-                        notify('❌请求失败')
+                        notify('❌请求失败，请稍后再试')
                         return
                     }
                     callback(response.response)
@@ -929,7 +958,7 @@
             var plan_button = document.createElement('button');
             plan_button.textContent = '生成用券方案';
             plan_button.addEventListener('click', function(){
-                if(document.querySelectorAll('div.chosen').length == 0){
+                if(document.querySelectorAll('div.coupon-item.chosen').length == 0){
                     notify("请先选择要使用的券")
                     return
                 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         coupon_filter
 // @namespace    http://tampermonkey.net/
-// @version      0.5
+// @version      0.6
 // @description  filter item by coupons
 // @author       Gahoo
 // @match        https://cart.jd.com/cart_index
@@ -164,6 +164,12 @@
         max-height: 60px;
     }
 
+    a.top {
+        position: fixed;
+        left: 20px;
+        top: 120px;
+    }
+
     button.coupon-filter-btn {
         position: fixed;
         left: 20px;
@@ -224,6 +230,10 @@
         position: relative;
         right: 36px;
         top: 14px;
+    }
+
+    div.coupon-plan.active {
+        border: 1px solid #ff8a8ad6;
     }
     `;
     document.head.appendChild(style);
@@ -557,6 +567,17 @@
             notify('❌请滚动页面确保所有图片都被正确加载。')
         }
         item_a.appendChild(img.cloneNode());
+        item_a.addEventListener('dragstart', function(e){
+            this.parentElement.parentElement.querySelector('.coupon-plan-destroyer').style.fontSize='2em';
+            e.dataTransfer.setData("text", this.dataset.id);
+            removeClassFromSelected('.coupon-plan.active', 'active')
+            this.parentElement.parentElement.classList.add('active')
+        });
+        item_a.addEventListener('dragend', function(){
+            if(this.parentElement){
+                this.parentElement.parentElement.querySelector('.coupon-plan-destroyer').style.fontSize=null;
+            }
+        });
         //var item_name = document.createElement('span');
         //item_name.className = 'coupon-plan-item item-name';
         //item_name.textContent = ref.title;
@@ -597,6 +618,31 @@
         plan_remover.textContent = '🗑️';
         plan_remover.addEventListener('click', function(){
             this.parentElement.remove()
+        });
+        plan_remover.addEventListener('drop', function(e){
+            e.preventDefault();
+            var data_id = e.dataTransfer.getData('text');
+            var plan = this.parentElement;
+            var item = plan.querySelector('[data-id="' + data_id + '"]')
+            var plan_item_list = plan.querySelector('.coupon-plan-item-list');
+            item.remove();
+            if(plan_item_list.childElementCount == 0){
+                plan.remove();
+            }else{
+                plan_item_list.dataset.balance = plan_item_list.dataset.balance - item.dataset.sum;
+                plan.querySelector('.coupon-plan-note').remove();
+                var new_notes = createPlanNotes(plan_item_list, maxQuotaCoupon('.coupon-plan.active > .coupon-list > .coupon-item'))
+                plan.appendChild(new_notes);
+            }
+            this.style.fontSize=null;
+        });
+        plan_remover.addEventListener('dragover', function(e){
+            e.preventDefault();
+            this.style.fontSize='3em';
+        });
+        plan_remover.addEventListener('dragleave', function(e){
+            e.preventDefault();
+            this.style.fontSize='2em';
         });
         return(plan_remover)
     }
@@ -652,10 +698,10 @@
         return(coupon_list)
     }
 
-    function maxQuotaCoupon(){
+    function maxQuotaCoupon(selector){
         var quota=0;
         var idx=0;
-        var chosen_coupons = document.querySelectorAll('div.coupon-item.chosen');
+        var chosen_coupons = document.querySelectorAll(selector);
         chosen_coupons.forEach(function(coupon, i){
             if(Number(coupon.dataset.quota) > quota){
                 quota = coupon.dataset.quota;
@@ -994,6 +1040,48 @@
         document.querySelector('.listed-number').textContent = '(' + document.querySelectorAll('.item-item:not(.hidden)').length + ')';
     }
 
+    function appendGoTop(){
+        var go_top = document.createElement('a');
+        go_top.className = 'top';
+        go_top.href = '#';
+        go_top.textContent = 'Top';
+        document.querySelector('div.cart-filter-bar').insertAdjacentElement('afterend', go_top);
+    }
+
+    function appendExtraOps(){
+        document.querySelectorAll('.p-ops').forEach(function(ops){
+            var hide_a = document.createElement('a');
+            hide_a.className = 'p-ops-item';
+            hide_a.href = '#none';
+            hide_a.textContent = '隐藏';
+            hide_a.addEventListener('click', function(){
+                this.parentElement.parentElement.parentElement.classList.add('hidden')
+            })
+
+            var add_to_plan_a = document.createElement('a');
+            add_to_plan_a.className = 'p-ops-item';
+            add_to_plan_a.href = '#none';
+            add_to_plan_a.textContent = '添加至方案';
+            add_to_plan_a.addEventListener('click', function(){
+                var plan = document.querySelector('.coupon-plan.active');
+                if(!plan){
+                    notify("❌当前没有活动方案，请先选中一个方案。");
+                    return
+                }
+                var plan_item_list = plan.querySelector('.coupon-plan-item-list');
+                var new_plan_item = createItemPlan(this.parentElement.parentElement.parentElement);
+                plan_item_list.appendChild(new_plan_item);
+                plan_item_list.dataset.balance = Number(plan_item_list.dataset.balance) + Number(new_plan_item.dataset.sum);
+                plan.querySelector('.coupon-plan-note').remove();
+                var new_notes = createPlanNotes(plan_item_list, maxQuotaCoupon('.coupon-plan.active > .coupon-list > .coupon-item'))
+                plan.appendChild(new_notes);
+            })
+
+            ops.appendChild(hide_a);
+            ops.appendChild(add_to_plan_a);
+        })
+    }
+
     window.addEventListener('load', function () {
 
     var get_coupon_list_button = document.createElement('button');
@@ -1034,15 +1122,20 @@
                     notify("请先选择要使用的券")
                     return
                 }
+                removeClassFromSelected('.coupon-plan.active', 'active')
                 var plan = document.createElement('div');
-                plan.className = 'coupon-plan';
-                var max_coupon = maxQuotaCoupon();
+                plan.className = 'coupon-plan active';
+                var max_coupon = maxQuotaCoupon('div.coupon-item.chosen');
                 plan.appendChild(createPlanRemover());
                 plan.appendChild(createCouponList());
                 plan.appendChild(createPlanCheckbox());
                 var plan_item_list = createPlanItemList(max_coupon.dataset.quota);
                 plan.appendChild(plan_item_list)
                 plan.appendChild(createPlanNotes(plan_item_list, max_coupon));
+                plan.addEventListener('click', function(){
+                    removeClassFromSelected('.coupon-plan.active', 'active')
+                    this.classList.add('active')
+                })
                 planer_box.appendChild(plan);
             });
             planer_box.appendChild(plan_button)
@@ -1051,6 +1144,8 @@
 
     appendPriceFilter();
     appendListedItemCounts();
+    appendGoTop();
+    appendExtraOps();
     });
 
 })();

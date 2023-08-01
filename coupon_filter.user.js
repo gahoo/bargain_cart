@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         coupon_filter
 // @namespace    http://tampermonkey.net/
-// @version      0.6
+// @version      0.7
 // @description  filter item by coupons
 // @author       Gahoo
 // @match        https://cart.jd.com/cart_index
@@ -235,7 +235,15 @@
     div.coupon-plan.active {
         border: 1px solid #ff8a8ad6;
     }
+
+    .active.sticky{
+        position: fixed;
+        top: 0;
+        z-index:10;
+        background:white;
+    }
     `;
+
     document.head.appendChild(style);
 
     function data2query(data){
@@ -657,7 +665,7 @@
         var remaining = Math.round(100 * (quota - balance)) / 100;
         if(remaining > 0){
             note.innerHTML = '<span class="coupon-plan-note reamin">还需要凑单<strong>' + remaining + '</strong>元</span>';
-        }else if(remaining < 0){
+        }else if(remaining <= 0){
             var percentage = Math.round(100 * (balance - discount) / balance)/ 100;
             var total_price = Math.round(100 * (balance - discount) / 100);
             note.innerHTML = '<span class="coupon-plan-note remain">超出了<strong>' + Math.abs(remaining) + '</strong>元</span>' +
@@ -1082,6 +1090,26 @@
         })
     }
 
+    function addScrollEvent(){
+        window.addEventListener('scroll', () => {
+            var active_plan = document.querySelector('.coupon-plan.active');
+            var planer = document.querySelector('.coupon-planer');
+
+            if(!active_plan){
+                return;
+            }
+            if (active_plan.getBoundingClientRect().top <= 0 && planer.getBoundingClientRect().bottom < 0) {
+                if(!active_plan.classList.contains('sticky')){
+                    active_plan.classList.add('sticky');
+                }
+            } else {
+                if(active_plan.classList.contains('sticky')){
+                    active_plan.classList.remove('sticky')
+                }
+            }
+        });
+    }
+
     window.addEventListener('load', function () {
 
     var get_coupon_list_button = document.createElement('button');
@@ -1146,6 +1174,7 @@
     appendListedItemCounts();
     appendGoTop();
     appendExtraOps();
+    addScrollEvent();
     });
 
 })();

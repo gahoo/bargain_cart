@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         coupon_filter
 // @namespace    http://tampermonkey.net/
-// @version      0.7
+// @version      0.8
 // @description  filter item by coupons
 // @author       Gahoo
 // @match        https://cart.jd.com/cart_index
@@ -67,6 +67,10 @@
     }
 
     div.promotion-item {
+       cursor: pointer;
+    }
+
+    span.coupon-plan-note.reamin > strong {
        cursor: pointer;
     }
 
@@ -243,7 +247,6 @@
         background:white;
     }
     `;
-
     document.head.appendChild(style);
 
     function data2query(data){
@@ -665,6 +668,15 @@
         var remaining = Math.round(100 * (quota - balance)) / 100;
         if(remaining > 0){
             note.innerHTML = '<span class="coupon-plan-note reamin">还需要凑单<strong>' + remaining + '</strong>元</span>';
+            note.querySelector('.coupon-plan-note.reamin > strong').addEventListener('click', function(){
+                if(remaining - 10 > 0){
+                    document.querySelector('.price-filter.low').value = remaining - 10;
+                }else{
+                    document.querySelector('.price-filter.low').value = 0;
+                }
+                document.querySelector('.price-filter.high').value = remaining + 10;
+                applyPriceFilter();
+            })
         }else if(remaining <= 0){
             var percentage = Math.round(100 * (balance - discount) / balance)/ 100;
             var total_price = Math.round(100 * (balance - discount) / 100);

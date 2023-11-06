@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         coupon_filter
 // @namespace    http://tampermonkey.net/
-// @version      0.8
+// @version      0.9
 // @description  filter item by coupons
 // @author       Gahoo
 // @match        https://cart.jd.com/cart_index
@@ -247,6 +247,16 @@
         background:white;
     }
     `;
+    `
+    .coupon-planer {
+    height: 105px;
+    overflow: scroll;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: white;
+}
+    `
     document.head.appendChild(style);
 
     function data2query(data){
@@ -1019,11 +1029,11 @@
         removeClassFromSelected('.item-suit.not-in-range', 'hidden')
         removeClassFromSelected('.item-item.not-in-range', 'not-in-range')
         removeClassFromSelected('.item-suit.not-in-range', 'not-in-range')
-        addClassToSelected('.item-item:not(.hidden)', 'not-in-range', function(item){
+        addClassToSelected('.item-item:not(.hidden,.item-invalid)', 'not-in-range', function(item){
             var price = getItemUnitPriceNumber(item);
             return(low_bound > price || high_bound < price)
         })
-        addClassToSelected('.item-suit:not(.hidden)', 'not-in-range', function(item){
+        addClassToSelected('.item-suit:not(.hidden,.item-invalid)', 'not-in-range', function(item){
                 var price = getItemUnitPriceNumber(item);
                 return(low_bound > price || high_bound < price)
         })
@@ -1148,12 +1158,23 @@
             var planer_box = document.createElement('div');
             planer_box.className = 'coupon-planer';
             document.querySelector('div.coupon-filter').insertAdjacentElement('afterend', planer_box);
-            var uncheck_button = document.createElement('button');
-            uncheck_button.textContent = '取消选中所有商品';
-            uncheck_button.addEventListener('click', function(){
+            var uncheck_coupon_button = document.createElement('button');
+            uncheck_coupon_button.textContent = '取消选中所有券';
+            uncheck_coupon_button.addEventListener('click', function(){
+                document.querySelectorAll('div.coupon-item.chosen,div.promotion-item.chosen').forEach(function(coupon_div){
+                    toggleCouponChosenClass(coupon_div);
+                    var chosen_coupon_items = hideUnchosenCouponItems();
+                    greyoutNotOverlap(chosen_coupon_items, 'div.coupon-item, div.promotion-item');
+                })
+            });
+            planer_box.appendChild(uncheck_coupon_button);
+
+            var uncheck_item_button = document.createElement('button');
+            uncheck_item_button.textContent = '取消选中所有商品';
+            uncheck_item_button.addEventListener('click', function(){
                 unsafeWindow.CartAction('OPT_CARTCHECKUNALL')
             });
-            planer_box.appendChild(uncheck_button);
+            planer_box.appendChild(uncheck_item_button);
 
             var plan_button = document.createElement('button');
             plan_button.textContent = '生成用券方案';

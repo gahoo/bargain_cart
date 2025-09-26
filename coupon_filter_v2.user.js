@@ -28,9 +28,12 @@
             this.name = name;
             this.price = price;
             this.quantity = quantity;
-            this.element = this._findElement(); // 查找正确的DOM元素
+            this.element = this._findElement();
             this.coupons = [];
             this.promotions = [];
+
+            const checkbox = this.element ? this.element.querySelector('input.jdcheckbox') : null;
+            this.selected = checkbox ? checkbox.checked : false;
         }
 
         /**
@@ -40,17 +43,12 @@
          * @returns {HTMLElement|null}
          */
         _findElement() {
-            // 首先找到包含 data-sku 的 .item-item 元素
             const itemElement = document.querySelector(`.item-item[data-sku="${this.id}"]`);
             if (!itemElement) {
                 console.warn(`Sku._findElement: 未找到 SKU ID 为 ${this.id} 的 .item-item 元素。`);
                 return null;
             }
-
-            // 检查该元素是否被一个 .item-combine (套装) 元素包裹
             const combineContainer = itemElement.closest('.item-combine');
-
-            // 如果找到了套装容器，则返回套装容器作为操作目标；否则返回单个商品元素。
             return combineContainer || itemElement;
         }
 
@@ -67,8 +65,10 @@
         }
 
         select() {
-            if (!this.element) return;
-            // Checkbox 应该在 element 内部
+            this.selected = true;
+            if (!this.element) {
+                return;
+            }
             const checkbox = this.element.querySelector('input.jdcheckbox');
             if (checkbox && !checkbox.checked) {
                 checkbox.click();
@@ -76,10 +76,25 @@
         }
 
         unselect() {
-            if (!this.element) return;
+            this.selected = false;
+            if (!this.element) {
+                return;
+            }
             const checkbox = this.element.querySelector('input.jdcheckbox');
             if (checkbox && checkbox.checked) {
                 checkbox.click();
+            }
+        }
+
+        append_coupon(coupon) {
+            if (coupon && !this.coupons.some(c => c.id === coupon.id)) {
+                this.coupons.push(coupon);
+            }
+        }
+
+        append_promotion(promotion) {
+            if (promotion && !this.promotions.some(p => p.id === promotion.id)) {
+                this.promotions.push(promotion);
             }
         }
     }
@@ -88,26 +103,39 @@
         constructor(id, title, skus, discount, quota, iconStyle, plusStyle, beginTime, endTime, overLap) {
             this.id = id;
             this.title = title;
-            this.skus = skus || []; // 适用的商品ID列表
+            this.skus = []; // 初始化为空，将通过append_sku添加Sku对象
             this.discount = discount;
-            this.quota = quota; // 使用门槛
+            this.quota = quota;
             this.couponIconStyle = iconStyle;
             this.plusStyle = plusStyle;
             this.beginTime = beginTime;
             this.endTime = endTime;
             this.overLap = overLap;
-            this.element = null; // 对应的UI按钮元素，由UIManager创建和赋值
+            this.element = null;
+            this.selected = false;
         }
 
-        hide() {
-            if (this.element) {
-                this.element.classList.add('hidden');
+        hide() { if (this.element) { this.element.classList.add('hidden'); } }
+
+        show() { if (this.element) { this.element.classList.remove('hidden'); } }
+
+        select() {
+            this.selected = true;
+            if (typeof UIManager.updateCouponSelection === 'function') {
+                UIManager.updateCouponSelection(this);
             }
         }
 
-        show() {
-            if (this.element) {
-                this.element.classList.remove('hidden');
+        unselect() {
+            this.selected = false;
+            if (typeof UIManager.updateCouponSelection === 'function') {
+                UIManager.updateCouponSelection(this);
+            }
+        }
+
+        append_sku(sku) {
+            if (sku && !this.skus.some(s => s.id === sku.id)) {
+                this.skus.push(sku);
             }
         }
     }
@@ -119,24 +147,35 @@
             this.STip = sTip;
             this.suitType = suitType;
             this.suitLabel = suitLabel;
-            this.skus = skus || []; // 参与此活动的商品ID列表
-            this.element = null; // 对应的UI按钮元素，由UIManager创建和赋值
+            this.skus = []; // 初始化为空，将通过append_sku添加Sku对象
+            this.element = null;
+            this.selected = false;
         }
 
-        hide() {
-            if (this.element) {
-                this.element.classList.add('hidden');
+        hide() { if (this.element) { this.element.classList.add('hidden'); } }
+
+        show() { if (this.element) { this.element.classList.remove('hidden'); } }
+
+        select() {
+            this.selected = true;
+            if (typeof UIManager.updatePromotionSelection === 'function') {
+                UIManager.updatePromotionSelection(this);
             }
         }
 
-        show() {
-            if (this.element) {
-                this.element.classList.remove('hidden');
+        unselect() {
+            this.selected = false;
+            if (typeof UIManager.updatePromotionSelection === 'function') {
+                UIManager.updatePromotionSelection(this);
+            }
+        }
+
+        append_sku(sku) {
+            if (sku && !this.skus.some(s => s.id === sku.id)) {
+                this.skus.push(sku);
             }
         }
     }
-
-        }
     }
 
     class Plan {
@@ -148,7 +187,7 @@
             this.element = null;
             this.total_price = this._calculateTotalPrice();
             this.real_price = 0; // 由UIManager异步更新
-            this.is_active = false;
+            this.selected = false; // 代替 is_active
         }
 
         /**
@@ -160,12 +199,8 @@
             return this.skus.reduce((total, sku) => total + (sku.price * sku.quantity), 0);
         }
 
-        // 应用方案：选中商品并触发价格更新
         apply() {
-            // 假设cart.unselect_all_skus()由外部调用
             this.skus.forEach(sku => sku.select());
-
-            // 通知UIManager去监听DOM变化并获取实际价格
             if (typeof UIManager.fetchRealPriceForPlan === 'function') {
                 UIManager.fetchRealPriceForPlan(this);
             }
@@ -189,28 +224,307 @@
             this.update_element();
         }
 
-        // 更新对应的UI元素
         update_element() {
             if (this.element && typeof UIManager.updatePlanElement === 'function') {
                 UIManager.updatePlanElement(this);
             }
+        }
+
+        select() {
+            this.selected = true;
+            if (typeof UIManager.updatePlanSelection === 'function') {
+                UIManager.updatePlanSelection(this);
+            }
+        }
+
+        unselect() {
+            this.selected = false;
+            if (typeof UIManager.updatePlanSelection === 'function') {
+                UIManager.updatePlanSelection(this);
+            }
+        }
+    }
+
+    class Cart {
+        constructor() {
+            this.skus = [];
+            this.coupons = [];
+            this.promotions = [];
+            this.plans = [];
+        }
+
+        // --- Getters ---
+        get_sku(skuId) {
+            return this.skus.find(s => s.id === skuId);
+        }
+        get_coupon(couponId) {
+            return this.coupons.find(c => c.id === couponId);
+        }
+        get_promotion(promoId) {
+            return this.promotions.find(p => p.id === promoId);
+        }
+        get_plan(planId) {
+            return this.plans.find(p => p.id === planId);
+        }
+
+        get_selected_skus() {
+            return this.skus.filter(s => s.selected);
+        }
+        get_selected_coupons() {
+            return this.coupons.filter(c => c.selected);
+        }
+        get_selected_promotions() {
+            return this.promotions.filter(p => p.selected);
+        }
+
+        // --- Relationship Getters ---
+        get_sku_coupons(skuId) {
+            return this.get_sku(skuId)?.coupons || [];
+        }
+        get_coupon_skus(couponId) {
+            return this.get_coupon(couponId)?.skus || [];
+        }
+        get_sku_promotions(skuId) {
+            return this.get_sku(skuId)?.promotions || [];
+        }
+        get_promotion_skus(promoId) {
+            return this.get_promotion(promoId)?.skus || [];
+        }
+
+        // --- Filtering Methods (Placeholders) ---
+        filter_coupons_by_skus(skus) { /* ... */ }
+        filter_promotions_by_skus(skus) { /* ... */ }
+        filter_skus_by_coupons(coupons) { /* ... */ }
+        filter_skus_by_promotions(promotions) { /* ... */ }
+
+        // --- Recommendation Algorithms (Placeholders) ---
+        recommend_bargain_skus() {
+            return [];
+        }
+        llm_recommend_bargain_skus() {
+            return [];
+        }
+
+        // --- Global Actions ---
+        unselect_all_skus() {
+            this.skus.forEach(sku => sku.unselect());
+        }
+        unselect_all_coupons() {
+            this.coupons.forEach(coupon => coupon.unselect());
+        }
+        unselect_all_promotions() {
+            this.promotions.forEach(promotion => promotion.unselect());
+        }
+
+        hide_all_skus() {
+            this.skus.forEach(sku => sku.hide());
+        }
+        show_all_skus() {
+            this.skus.forEach(sku => sku.show());
+        }
+
+        select_plan(planToSelect) {
+            this.plans.forEach(p => {
+                if (p.id === planToSelect.id) {
+                    p.select();
+                } else {
+                    p.unselect();
+                }
+            });
         }
     }
 
     // --- 模块：API处理器 ---
 
     const APIHandler = {
+        // URL片段到具体数据处理函数的映射
+        // 注意：必须.bind(DataManager)来确保处理器内部的this指向正确
+        apiMap: {
+            'pcCart_jc_getCurrentCart': DataManager.processCartData.bind(DataManager),
+            'pcCart_jc_cartCouponList': DataManager.processCouponData.bind(DataManager)
+        },
+
         init() {
             console.log("APIHandler initialized");
-            // XHR拦截逻辑将在这里实现
+            this.proxyXHR();
+        },
+
+        proxyXHR() {
+            const open = XMLHttpRequest.prototype.open;
+            const send = XMLHttpRequest.prototype.send;
+            const self = this;
+
+            XMLHttpRequest.prototype.open = function(method, url) {
+                this._url = url;
+                this._dataProcessor = null; // 初始化数据处理器
+
+                const matchedKeys = Object.keys(self.apiMap).filter(key => url.includes(key));
+
+                if (matchedKeys.length > 0) {
+                    const key = matchedKeys[0];
+                    this._dataProcessor = self.apiMap[key]; // 获取对应的、已绑定上下文的处理函数
+                }
+
+                return open.apply(this, arguments);
+            };
+
+            XMLHttpRequest.prototype.send = function() {
+                if (this._dataProcessor) { // 如果在open时找到了对应的处理器
+                    this.addEventListener("load", function() {
+                        if (this.status === 200) {
+                            try {
+                                const data = JSON.parse(this.responseText);
+                                // 直接调用附加在XHR对象上的数据处理函数
+                                this._dataProcessor(data);
+                            } catch (error) {
+                                console.error("Error parsing API response:", error);
+                            }
+                        }
+                    });
+                }
+                return send.apply(this, arguments);
+            };
         }
     };
 
     // --- 模块：数据管理器 ---
     const DataManager = {
+        cart: null, // 将用于存储唯一的Cart实例
+
         init() {
             console.log("DataManager initialized");
-            // 数据处理和模型实例化逻辑将在这里实现
+            this.cart = new Cart();
+        },
+
+                // 处理来自 pcCart_jc_getCurrentCart 的数据
+                processCartData(data) {
+                    console.log("Processing Cart Data:", data);
+                    if (!data?.resultData?.cartInfo?.vendors) {
+                        console.error("Invalid cart data structure");
+                        return;
+                    }
+        
+                    const handleItemData = (itemData) => {
+                        if (!itemData || !itemData.Id) return null;
+        
+                        // 1. 查找或创建 Sku 对象
+                        let sku = this.cart.get_sku(itemData.Id);
+                        if (!sku) {
+                            sku = new Sku(itemData.Id, itemData.Name, itemData.Price, itemData.Num);
+                            this.cart.skus.push(sku);
+                        }
+        
+                        // 2. 查找或创建该商品关联的 Promotion 对象，并建立双向关联
+                        if (itemData.canSelectPromotions && itemData.canSelectPromotions.length > 0) {
+                            for (const promoData of itemData.canSelectPromotions) {
+                                if (!promoData.id) continue;
+                                let promotion = this.cart.get_promotion(promoData.id);
+                                if (!promotion) {
+                                    promotion = new Promotion(promoData.id, promoData.title, promoData.STip, promoData.suitType, promoData.suitLabel);
+                                    this.cart.promotions.push(promotion);
+                                }
+                                sku.append_promotion(promotion);
+                                promotion.append_sku(sku);
+                            }
+                        }
+                        return sku;
+                    };
+        
+                    for (const vendor of data.resultData.cartInfo.vendors) {
+                        if (!vendor.sorted) continue;
+        
+                        /*
+                         * 根据观察, sortItem.itemType 的可能取值及意义:
+                         * - 1: 常规商品
+                         * - 4: 套装商品 (其 .item.items 数组包含实际商品)
+                         * - 9: 促销组合 (其 .item.items 数组包含实际商品)
+                         *
+                         * 代码主要通过判断 .item.items 是否存在且非空来识别集合类商品 (鸭子类型),
+                         * 但在处理促销组合时，会显式检查 itemType === 9 来应用其容器自身的促销信息。
+                         */
+                        for (const sortItem of vendor.sorted) {
+                            // 集合类商品 (套装/促销)
+                            if (sortItem.item?.items?.length > 0) {
+                                // 如果是促销组合(itemType:9)，它本身也定义了一个促销活动
+                                if (sortItem.itemType === 9 && sortItem.item?.promotionId) {
+                                    const promoData = sortItem.item;
+                                    let containerPromotion = this.cart.get_promotion(promoData.promotionId);
+                                    if (!containerPromotion) {
+                                        containerPromotion = new Promotion(promoData.promotionId, promoData.Name, promoData.STip, promoData.suitType, promoData.suitLabel);
+                                        this.cart.promotions.push(containerPromotion);
+                                    }
+        
+                                    // 处理该促销下的所有商品
+                                    for (const subItem of sortItem.item.items) {
+                                        const sku = handleItemData(subItem.item);
+                                        if (sku) {
+                                            sku.append_promotion(containerPromotion);
+                                            containerPromotion.append_sku(sku);
+                                        }
+                                    }
+                                } else {
+                                    // 普通套装(itemType:4)，只处理商品
+                                    for (const subItem of sortItem.item.items) {
+                                        handleItemData(subItem.item);
+                                    }
+                                }
+                            }
+                            // 单个商品
+                            else if (sortItem.item) {
+                                handleItemData(sortItem.item);
+                            }
+                        }
+                    }
+        
+                    console.log(`Skus processed: ${this.cart.skus.length}`);
+                    console.log(`Promotions processed: ${this.cart.promotions.length}`);
+                },
+        // 处理来自 pcCart_jc_cartCouponList 的数据
+        processCouponData(data) {
+            console.log("Processing Coupon Data:", data);
+            if (!data?.resultData) {
+                console.error("Invalid coupon data structure");
+                return;
+            }
+
+            const allCouponsData = [
+                ...(data.resultData.activeCoupons || []),
+                ...(data.resultData.usableCoupons || [])
+            ];
+
+            for (const couponData of allCouponsData) {
+                if (!couponData.couponId) continue;
+
+                // 1. 查找或创建 Coupon 对象
+                let coupon = this.cart.get_coupon(couponData.couponId);
+                if (!coupon) {
+                    coupon = new Coupon(
+                        couponData.couponId,
+                        couponData.name,
+                        [], // skus 列表将通过 append_sku 填充
+                        couponData.discount,
+                        couponData.quota,
+                        couponData.couponIconStyle,
+                        couponData.plusStyle,
+                        couponData.beginTime,
+                        couponData.endTime,
+                        couponData.overLap
+                    );
+                    this.cart.coupons.push(coupon);
+                }
+
+                // 2. 查找或创建关联的 Sku 对象，并建立双向关联
+                const skuIds = couponData.items?.map(item => String(item.id)) || [];
+                for (const skuId of skuIds) {
+                    const sku = this.cart.get_sku(skuId);
+                    if (sku) {
+                        sku.append_coupon(coupon);
+                        coupon.append_sku(sku);
+                    }
+                }
+            }
+
+            console.log(`Coupons processed: ${this.cart.coupons.length}`);
         }
     };
 

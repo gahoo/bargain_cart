@@ -12,6 +12,9 @@
 (function() {
     'use strict';
 
+    // --- 可配置常量 ---
+    const CLICK_DELAY = 800; // 领券点击延迟（毫秒）
+
     // --- 工具函数 ---
     function addGlobalStyle(css) {
         const head = document.getElementsByTagName('head')[0];
@@ -277,6 +280,10 @@
             return this.promotions.filter(p => p.selected);
         }
 
+        get_selected_plan() {
+            return this.plans.find(p => p.selected);
+        }
+
         // --- Relationship Getters ---
         get_sku_coupons(skuId) {
             return this.get_sku(skuId)?.coupons || [];
@@ -396,90 +403,94 @@
             this.cart = new Cart();
         },
 
-                // 处理来自 pcCart_jc_getCurrentCart 的数据
-                processCartData(data) {
-                    console.log("Processing Cart Data:", data);
-                    if (!data?.resultData?.cartInfo?.vendors) {
-                        console.error("Invalid cart data structure");
-                        return;
+        // 处理来自 pcCart_jc_getCurrentCart 的数据
+        processCartData(data) {
+            console.log("Processing Cart Data:", data);
+            if (!data?.resultData?.cartInfo?.vendors) {
+                console.error("Invalid cart data structure");
+                return;
+            }
+
+            const handleItemData = (itemData) => {
+                if (!itemData || !itemData.Id) return null;
+
+                // 1. 查找或创建 Sku 对象
+                let sku = this.cart.get_sku(itemData.Id);
+                if (!sku) {
+                    sku = new Sku(itemData.Id, itemData.Name, itemData.Price, itemData.Num);
+                    this.cart.skus.push(sku);
+                }
+
+                // 2. 查找或创建该商品关联的 Promotion 对象，并建立双向关联
+                if (itemData.canSelectPromotions && itemData.canSelectPromotions.length > 0) {
+                    for (const promoData of itemData.canSelectPromotions) {
+                        if (!promoData.id) continue;
+                        let promotion = this.cart.get_promotion(promoData.id);
+                        if (!promotion) {
+                            promotion = new Promotion(promoData.id, promoData.title, promoData.STip, promoData.suitType, promoData.suitLabel);
+                            this.cart.promotions.push(promotion);
+                        }
+                        sku.append_promotion(promotion);
+                        promotion.append_sku(sku);
                     }
-        
-                    const handleItemData = (itemData) => {
-                        if (!itemData || !itemData.Id) return null;
-        
-                        // 1. 查找或创建 Sku 对象
-                        let sku = this.cart.get_sku(itemData.Id);
-                        if (!sku) {
-                            sku = new Sku(itemData.Id, itemData.Name, itemData.Price, itemData.Num);
-                            this.cart.skus.push(sku);
-                        }
-        
-                        // 2. 查找或创建该商品关联的 Promotion 对象，并建立双向关联
-                        if (itemData.canSelectPromotions && itemData.canSelectPromotions.length > 0) {
-                            for (const promoData of itemData.canSelectPromotions) {
-                                if (!promoData.id) continue;
-                                let promotion = this.cart.get_promotion(promoData.id);
-                                if (!promotion) {
-                                    promotion = new Promotion(promoData.id, promoData.title, promoData.STip, promoData.suitType, promoData.suitLabel);
-                                    this.cart.promotions.push(promotion);
-                                }
-                                sku.append_promotion(promotion);
-                                promotion.append_sku(sku);
+                }
+                return sku;
+            };
+
+            for (const vendor of data.resultData.cartInfo.vendors) {
+                if (!vendor.sorted) continue;
+
+                /*
+                 * 根据观察, sortItem.itemType 的可能取值及意义:
+                 * - 1: 常规商品
+                 * - 4: 套装商品 (其 .item.items 数组包含实际商品)
+                 * - 9: 促销组合 (其 .item.items 数组包含实际商品)
+                 *
+                 * 代码主要通过判断 .item.items 是否存在且非空来识别集合类商品 (鸭子类型),
+                 * 但在处理促销组合时，会显式检查 itemType === 9 来应用其容器自身的促销信息。
+                 */
+                for (const sortItem of vendor.sorted) {
+                    // 集合类商品 (套装/促销)
+                    if (sortItem.item?.items?.length > 0) {
+                        // 如果是促销组合(itemType:9)，它本身也定义了一个促销活动
+                        if (sortItem.itemType === 9 && sortItem.item?.promotionId) {
+                            const promoData = sortItem.item;
+                            let containerPromotion = this.cart.get_promotion(promoData.promotionId);
+                            if (!containerPromotion) {
+                                containerPromotion = new Promotion(promoData.promotionId, promoData.Name, promoData.STip, promoData.suitType, promoData.suitLabel);
+                                this.cart.promotions.push(containerPromotion);
                             }
-                        }
-                        return sku;
-                    };
-        
-                    for (const vendor of data.resultData.cartInfo.vendors) {
-                        if (!vendor.sorted) continue;
-        
-                        /*
-                         * 根据观察, sortItem.itemType 的可能取值及意义:
-                         * - 1: 常规商品
-                         * - 4: 套装商品 (其 .item.items 数组包含实际商品)
-                         * - 9: 促销组合 (其 .item.items 数组包含实际商品)
-                         *
-                         * 代码主要通过判断 .item.items 是否存在且非空来识别集合类商品 (鸭子类型),
-                         * 但在处理促销组合时，会显式检查 itemType === 9 来应用其容器自身的促销信息。
-                         */
-                        for (const sortItem of vendor.sorted) {
-                            // 集合类商品 (套装/促销)
-                            if (sortItem.item?.items?.length > 0) {
-                                // 如果是促销组合(itemType:9)，它本身也定义了一个促销活动
-                                if (sortItem.itemType === 9 && sortItem.item?.promotionId) {
-                                    const promoData = sortItem.item;
-                                    let containerPromotion = this.cart.get_promotion(promoData.promotionId);
-                                    if (!containerPromotion) {
-                                        containerPromotion = new Promotion(promoData.promotionId, promoData.Name, promoData.STip, promoData.suitType, promoData.suitLabel);
-                                        this.cart.promotions.push(containerPromotion);
-                                    }
-        
-                                    // 处理该促销下的所有商品
-                                    for (const subItem of sortItem.item.items) {
-                                        const sku = handleItemData(subItem.item);
-                                        if (sku) {
-                                            sku.append_promotion(containerPromotion);
-                                            containerPromotion.append_sku(sku);
-                                        }
-                                    }
-                                } else {
-                                    // 普通套装(itemType:4)，只处理商品
-                                    for (const subItem of sortItem.item.items) {
-                                        handleItemData(subItem.item);
-                                    }
+
+                            // 处理该促销下的所有商品
+                            for (const subItem of sortItem.item.items) {
+                                const sku = handleItemData(subItem.item);
+                                if (sku) {
+                                    sku.append_promotion(containerPromotion);
+                                    containerPromotion.append_sku(sku);
                                 }
                             }
-                            // 单个商品
-                            else if (sortItem.item) {
-                                handleItemData(sortItem.item);
+                        } else {
+                            // 普通套装(itemType:4)，只处理商品
+                            for (const subItem of sortItem.item.items) {
+                                handleItemData(subItem.item);
                             }
                         }
+                    } 
+                    // 单个商品
+                    else if (sortItem.item) {
+                        handleItemData(sortItem.item);
                     }
-        
-                    console.log(`Skus processed: ${this.cart.skus.length}`);
-                    console.log(`Promotions processed: ${this.cart.promotions.length}`);
-                },
-        // 处理来自 pcCart_jc_cartCouponList 的数据
+                }
+            }
+
+            console.log(`Skus processed: ${this.cart.skus.length}`);
+            console.log(`Promotions processed: ${this.cart.promotions.length}`);
+
+            // 通知UI管理器SKU数据已就绪，可以注入依赖SKU的按钮
+            UIManager.injectSkuActionButtons();
+        },
+
+// 处理来自 pcCart_jc_cartCouponList 的数据
         processCouponData(data) {
             console.log("Processing Coupon Data:", data);
             if (!data?.resultData) {
@@ -532,7 +543,176 @@
     const UIManager = {
         init() {
             console.log("UIManager initialized");
-            // DOM操作和用户交互逻辑将在这里实现
+            this.injectCoreStyles();
+            this.injectContainers();
+            this.injectButtons();
+        },
+
+        // 注入脚本所需的核心CSS
+        injectCoreStyles() {
+            addGlobalStyle(`
+                .hidden { display: none !important; }
+                .coupon-filter-container, .promotion-filter-container, .plan-container {
+                    margin: 10px 0;
+                    padding: 10px;
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                }
+            `);
+        },
+
+        // 注入UI容器
+        injectContainers() {
+            const toolbarWrap = document.querySelector('.toolbar-wrap');
+            const cartCountDetail = document.querySelector('.cart_count_detail');
+
+            if (toolbarWrap) {
+                const couponContainer = document.createElement('div');
+                couponContainer.className = 'coupon-filter-container';
+                couponContainer.innerHTML = '<div class="coupon-list"></div>';
+                toolbarWrap.parentNode.insertBefore(couponContainer, toolbarWrap.nextSibling);
+
+                const promotionContainer = document.createElement('div');
+                promotionContainer.className = 'promotion-filter-container';
+                promotionContainer.innerHTML = '<div class="promotion-list"></div>';
+                couponContainer.parentNode.insertBefore(promotionContainer, couponContainer.nextSibling);
+            }
+
+            if (cartCountDetail) {
+                const planContainer = document.createElement('div');
+                planContainer.className = 'plan-container';
+                planContainer.innerHTML = '<div class="plan-list"></div>';
+                cartCountDetail.parentNode.insertBefore(planContainer, cartCountDetail);
+            }
+        },
+
+        // 注入功能按钮
+        injectButtons() {
+            const operationDiv = document.querySelector('.operation');
+            if (!operationDiv) return;
+
+            // 1. 创建“获取优惠券”按钮
+            const getCouponsBtn = document.createElement('a');
+            getCouponsBtn.href = '#none';
+            getCouponsBtn.innerText = '获取优惠券';
+            getCouponsBtn.style.marginLeft = '10px';
+            getCouponsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const allCouponBtns = document.querySelectorAll('.shop-coupon-btn');
+                let index = 0;
+                function clickNext() {
+                    if (index >= allCouponBtns.length) return;
+                    allCouponBtns[index].click();
+                    index++;
+                    setTimeout(clickNext, CLICK_DELAY);
+                }
+                clickNext();
+            });
+
+            // 2. 创建“取消选中所有商品”按钮
+            const unselectAllBtn = document.createElement('a');
+            unselectAllBtn.href = '#none';
+            unselectAllBtn.innerText = '取消全选';
+            unselectAllBtn.style.marginLeft = '10px';
+            unselectAllBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                DataManager.cart.unselect_all_skus();
+            });
+
+            // 3. 创建“取消选中所有优惠”按钮
+            const unselectAllFiltersBtn = document.createElement('a');
+            unselectAllFiltersBtn.href = '#none';
+            unselectAllFiltersBtn.innerText = '取消选中所有优惠';
+            unselectAllFiltersBtn.style.marginLeft = '10px';
+            unselectAllFiltersBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                DataManager.cart.unselect_all_coupons();
+                DataManager.cart.unselect_all_promotions();
+            });
+
+            // 4. 创建“凑单”按钮
+            const bargainBtn = document.createElement('a');
+            bargainBtn.href = '#none';
+            bargainBtn.innerText = '凑单';
+            bargainBtn.style.marginLeft = '10px';
+            bargainBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                DataManager.cart.recommend_bargain_skus();
+            });
+
+            // 5. 创建“AI凑单”按钮
+            const aiBargainBtn = document.createElement('a');
+            aiBargainBtn.href = '#none';
+            aiBargainBtn.innerText = 'AI凑单';
+            aiBargainBtn.style.marginLeft = '10px';
+            aiBargainBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                DataManager.cart.llm_recommend_bargain_skus();
+            });
+
+            // 按顺序添加所有按钮
+            operationDiv.appendChild(getCouponsBtn);
+            operationDiv.appendChild(unselectAllBtn);
+            operationDiv.appendChild(unselectAllFiltersBtn);
+            operationDiv.appendChild(bargainBtn);
+            operationDiv.appendChild(aiBargainBtn);
+        },
+
+        // 为每个商品行注入“添加至方案”按钮
+        injectSkuActionButtons() {
+            for (const sku of DataManager.cart.skus) {
+                if (!sku.element) continue;
+
+                const pOpsDiv = sku.element.querySelector('.p-ops');
+                if (pOpsDiv) {
+                    // 防止重复注入
+                    if (pOpsDiv.querySelector('.add-to-plan-btn')) continue;
+
+                    const addToPlanBtn = document.createElement('a');
+                    addToPlanBtn.href = '#none';
+                    addToPlanBtn.innerText = '添加至方案';
+                    addToPlanBtn.className = 'add-to-plan-btn';
+                    addToPlanBtn.style.marginLeft = '10px';
+
+                    addToPlanBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const selectedPlan = DataManager.cart.get_selected_plan();
+                        if (selectedPlan) {
+                            selectedPlan.add_sku(sku);
+                        } else {
+                            this.showMessage('请先选择一个凑单方案！', 'warning');
+                        }
+                    });
+                    pOpsDiv.appendChild(addToPlanBtn);
+                }
+            }
+        },
+
+        // 显示顶部弹出消息
+        showMessage(message, type = 'info') {
+            // 移除已存在的消息，确保每次只显示一个
+            document.querySelector('.cart-filter-top-popup')?.remove();
+
+            const optionsBox = document.querySelector('.fixed_center .options-box');
+            if (!optionsBox) return;
+
+            const popup = document.createElement('div');
+            popup.className = 'cart-filter-top-popup';
+            // 根据消息类型可以添加不同的class，例如 cart-filter-top-popup-warning
+            popup.innerHTML = `<span class="iconjj"></span><span>${message}</span><i class="icon-popup-cls"></i>`;
+            
+            optionsBox.parentNode.insertBefore(popup, optionsBox.nextSibling);
+
+            const close = () => popup.remove();
+
+            // 点击关闭按钮
+            const closeBtn = popup.querySelector('.icon-popup-cls');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', close);
+            }
+
+            // 3秒后自动消失
+            setTimeout(close, 3000);
         }
     };
 

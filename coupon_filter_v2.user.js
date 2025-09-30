@@ -182,7 +182,6 @@
             }
         }
     }
-    }
 
     class Plan {
         constructor(id, skus, coupons, promotions) {
@@ -1196,7 +1195,7 @@
             if (skuDiv) {
                 skuDiv.remove();
             }
-        }
+        },
         // 应用方案后，监听价格变化并更新UI
         fetchRealPriceForPlan(plan) {
             const priceContainer = document.querySelector('.cart_count_detail');

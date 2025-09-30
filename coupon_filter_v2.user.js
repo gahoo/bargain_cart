@@ -14,6 +14,9 @@
 
     // --- 可配置常量 ---
     const CLICK_DELAY = 800; // 领券点击延迟（毫秒）
+    const LLM_API_URL = ''; // 在此填入你的LLM API URL, 例如 https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    const LLM_API_KEY = ''; // 在此填入你的LLM API KEY
+    const LLM_MODEL = 'gemini-1.5-flash'; // 你希望使用的模型
 
     // --- 工具函数 ---
     function addGlobalStyle(css) {
@@ -248,6 +251,19 @@
             this.coupons = [];
             this.promotions = [];
             this.plans = [];
+            this.recommend_blacklist_skus = []; // 凑单黑名单
+        }
+
+        add_to_blacklist(sku) {
+            if (sku && !this.recommend_blacklist_skus.some(s => s.id === sku.id)) {
+                this.recommend_blacklist_skus.push(sku);
+                UIManager.updateBlacklistButtons(sku, true);
+            }
+        }
+
+        remove_from_blacklist(sku) {
+            this.recommend_blacklist_skus = this.recommend_blacklist_skus.filter(s => s.id !== sku.id);
+            UIManager.updateBlacklistButtons(sku, false);
         }
 
         add_plan(plan) {
@@ -343,13 +359,12 @@
             }
 
             // 计算所有选中优惠券适用SKU的交集
-            let applicableSkus = new Set(selectedCoupons[0].skus.map(s => s.id));
+            let applicableSkuIds = new Set(selectedCoupons[0].skus.map(s => s.id));
             for (let i = 1; i < selectedCoupons.length; i++) {
                 const nextSkuIds = new Set(selectedCoupons[i].skus.map(s => s.id));
-                applicableSkus = new Set([...applicableSkus].filter(id => nextSkuIds.has(id)));
+                applicableSkuIds = new Set([...applicableSkuIds].filter(id => nextSkuIds.has(id)));
             }
-
-            return Array.from(applicableSkus).map(id => this.get_sku(id));
+            return Array.from(applicableSkuIds).map(id => this.get_sku(id));
         }
 
         // 根据当前选中的促销活动，筛选出适用的商品
@@ -360,21 +375,166 @@
             }
 
             // 计算所有选中促销适用SKU的交集
-            let applicableSkus = new Set(selectedPromotions[0].skus.map(s => s.id));
+            let applicableSkuIds = new Set(selectedPromotions[0].skus.map(s => s.id));
             for (let i = 1; i < selectedPromotions.length; i++) {
                 const nextSkuIds = new Set(selectedPromotions[i].skus.map(s => s.id));
-                applicableSkus = new Set([...applicableSkus].filter(id => nextSkuIds.has(id)));
+                applicableSkuIds = new Set([...applicableSkuIds].filter(id => nextSkuIds.has(id)));
+            }
+            return Array.from(applicableSkuIds).map(id => this.get_sku(id));
+        }
+
+        // 根据当前选中的优惠券和促销活动，筛选出最终适用的商品
+        filter_skus_by_coupons_and_promotions() {
+            const filteredByCoupon = this.filter_skus_by_coupons();
+            const filteredByPromo = this.filter_skus_by_promotions();
+            const couponSkuIds = new Set(filteredByCoupon.map(s => s.id));
+            return filteredByPromo.filter(s => couponSkuIds.has(s.id));
+        }
+
+        // --- Recommendation Algorithms ---
+        recommend_bargain_skus() {
+            const selectedCoupons = this.get_selected_coupons();
+            if (selectedCoupons.length === 0) {
+                UIManager.showMessage("请先选择一个优惠券！", "warning");
+                return;
+            }
+            const quota = Math.max(...selectedCoupons.map(c => c.quota));
+
+            let currentPrice = 0;
+            let planSkus = [];
+
+            const mandatorySkus = this.get_selected_skus();
+            mandatorySkus.forEach(sku => {
+                currentPrice += sku.price * sku.quantity;
+                planSkus.push(sku);
+            });
+
+            if (currentPrice >= quota) {
+                UIManager.showMessage("已选商品已满足优惠门槛，无需凑单。", "info");
+                const plan = new Plan(null, planSkus, selectedCoupons, this.get_selected_promotions());
+                this.add_plan(plan);
+                return;
             }
 
-            return Array.from(applicableSkus).map(id => this.get_sku(id));
-        }
+            // 2. 贪心填充
+            const mandatorySkuIds = new Set(mandatorySkus.map(s => s.id));
+            const blacklistSkuIds = new Set(this.recommend_blacklist_skus.map(s => s.id));
+            const availableSkus = this.filter_skus_by_coupons_and_promotions()
+                .filter(s => !mandatorySkuIds.has(s.id) && !blacklistSkuIds.has(s.id));
+            availableSkus.sort((a, b) => b.price - a.price);
 
-        // --- Recommendation Algorithms (Placeholders) ---
-        recommend_bargain_skus() {
-            return [];
-        }
-        llm_recommend_bargain_skus() {
-            return [];
+            const overQuotaSkus = [];
+            for (const sku of availableSkus) {
+                if (currentPrice + sku.price <= quota) {
+                    currentPrice += sku.price * sku.quantity;
+                    planSkus.push(sku);
+                } else {
+                    overQuotaSkus.push(sku);
+                }
+            }
+
+            // 3. 凑单优化
+            if (currentPrice < quota && overQuotaSkus.length > 0) {
+                overQuotaSkus.sort((a, b) => a.price - b.price); // 1. 从小到大排序
+
+                let lastShortfall = quota - currentPrice;
+
+                for (const sku of overQuotaSkus) { // 2. 开始循环
+                    const skuTotalPrice = sku.price * sku.quantity; // 3. 计算sku总价
+                    const remaining = quota - (currentPrice + skuTotalPrice); // 4. 计算差额
+
+                    if (remaining >= 0) { // 5. 仍为shortfall
+                        currentPrice += skuTotalPrice;
+                        planSkus.push(sku);
+                        lastShortfall = remaining;
+                    } else { // 6. 出现surplus
+                        const surplus = Math.abs(remaining);
+                        if (surplus < lastShortfall) {
+                            planSkus.push(sku); // surplus更优，采纳最后一次添加
+                        }
+                        break; // 无论哪种情况，都退出循环
+                    }
+                }
+            }
+
+            // 4. 创建并添加方案
+            const finalPlan = new Plan(null, planSkus, selectedCoupons, this.get_selected_promotions());
+            this.add_plan(finalPlan);
+        },
+        async llm_recommend_bargain_skus() {
+            const selectedCoupons = this.get_selected_coupons();
+            const selectedPromotions = this.get_selected_promotions();
+            const mandatorySkus = this.get_selected_skus();
+            const mandatorySkuIds = new Set(mandatorySkus.map(s => s.id));
+            const blacklistSkuIds = new Set(this.recommend_blacklist_skus.map(s => s.id));
+
+            if (selectedCoupons.length === 0 && selectedPromotions.length === 0) {
+                UIManager.showMessage("请先选择优惠券或促销活动！", "warning");
+                return;
+            }
+
+            if (!LLM_API_URL || !LLM_API_KEY) {
+                UIManager.showMessage("请先在脚本中配置LLM_API_URL和LLM_API_KEY！", "error");
+                return;
+            }
+
+            const availableSkus = this.filter_skus_by_coupons_and_promotions()
+                .filter(s => !mandatorySkuIds.has(s.id) && !blacklistSkuIds.has(s.id));
+
+            const inputJSON = {
+                available_skus: availableSkus.map(s => ({ id: s.id, name: s.name, price: s.price, quantity: s.quantity })),
+                coupons: selectedCoupons.map(c => ({ id: c.id, description: c.title, discount: c.discount, quota: c.quota })),
+                promotions: selectedPromotions.map(p => ({ id: p.id, description: p.title || p.STip })),
+                context: {
+                    selected_sku_ids: Array.from(mandatorySkuIds),
+                    excluded_sku_ids: Array.from(blacklistSkuIds)
+                }
+            };
+
+            const prompt = `\n你是一个专业的凑单助手。\n你的任务是根据我提供的JSON数据，生成一个或多个凑单方案，目标是满足所有优惠券和促销活动的门槛，同时让最终的“到手价”尽可能低。\n\n这是我提供的数据：\n\`\`\`json\n${JSON.stringify(inputJSON, null, 2)}\n\`\`\`\n\n请你返回一个严格的JSON对象，该对象包含一个名为 \"plans\" 的数组，每个数组元素都是一个凑单方案，格式如下：\n\n\`\`\`json\n{\n  \"plans\": [\n    {\n      \"plan_id\": \"ai-plan-1\",\n      \"coupon_ids\": [1336995065],\n      \"promotion_ids\": [987654321],\n      \"sku_ids\": [\"1001\", \"1002\"]\n    }\n  ]\n}\n\`\`\`\n\n请直接返回JSON对象，不要包含任何额外的解释或说明。\n`;
+
+            UIManager.showMessage("正在请求AI凑单，请稍候...", "info");
+
+            const requestBody = {
+                model: LLM_MODEL,
+                messages: [
+                    { "role": "user", "content": prompt }
+                ],
+                response_format: { "type": "json_object" } // 请求JSON输出
+            };
+
+            try {
+                const response = await fetch(LLM_API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${LLM_API_KEY}`
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                const rawJsonText = result.choices[0].message.content;
+                const llmPlans = JSON.parse(rawJsonText);
+
+                const plans = llmPlans.plans || [llmPlans];
+
+                for (const planData of plans) {
+                    const planSkus = planData.sku_ids.map(id => this.get_sku(String(id))).filter(Boolean);
+                    const planCoupons = planData.coupon_ids.map(id => this.get_coupon(id)).filter(Boolean);
+                    const planPromos = planData.promotion_ids.map(id => this.get_promotion(id)).filter(Boolean);
+                    const aiPlan = new Plan(planData.plan_id || `ai-${Date.now()}`, planSkus, planCoupons, planPromos);
+                    this.add_plan(aiPlan);
+                }
+
+            } catch (error) {
+                console.error("LLM API request failed:", error);
+                UIManager.showMessage("AI凑单失败，请检查网络或API配置。", "error");
+            }
         }
 
         // --- Global Actions ---
@@ -450,6 +610,7 @@
                                 this._dataProcessor(data);
                             } catch (error) {
                                 console.error("Error parsing API response:", error);
+                                UIManager.showMessage("解析API数据时出错，部分功能可能异常。", "error");
                             }
                         }
                     });
@@ -730,14 +891,8 @@
 
         // 应用所有SKU筛选器并更新UI
         applySkuFilters() {
-            const filteredByCoupon = DataManager.cart.filter_skus_by_coupons();
-            const filteredByPromo = DataManager.cart.filter_skus_by_promotions();
-
-            const couponSkuIds = new Set(filteredByCoupon.map(s => s.id));
+            const finalSkus = DataManager.cart.filter_skus_by_coupons_and_promotions();
             
-            // 计算两个筛选结果的交集
-            const finalSkus = filteredByPromo.filter(s => couponSkuIds.has(s.id));
-
             DataManager.cart.hide_all_skus();
             finalSkus.forEach(sku => sku.show());
         },
@@ -878,7 +1033,6 @@
                     addToPlanBtn.innerText = '添加至方案';
                     addToPlanBtn.className = 'add-to-plan-btn';
                     addToPlanBtn.style.marginLeft = '10px';
-
                     addToPlanBtn.addEventListener('click', (e) => {
                         e.preventDefault();
                         const selectedPlan = DataManager.cart.get_selected_plan();
@@ -888,9 +1042,41 @@
                             this.showMessage('请先选择一个凑单方案！', 'warning');
                         }
                     });
+
+                    const addToBlacklistBtn = document.createElement('a');
+                    addToBlacklistBtn.href = '#none';
+                    addToBlacklistBtn.innerText = '添加至黑名单';
+                    addToBlacklistBtn.className = 'add-to-blacklist-btn';
+                    addToBlacklistBtn.style.marginLeft = '10px';
+                    addToBlacklistBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        DataManager.cart.add_to_blacklist(sku);
+                    });
+
+                    const removeFromBlacklistBtn = document.createElement('a');
+                    removeFromBlacklistBtn.href = '#none';
+                    removeFromBlacklistBtn.innerText = '移出黑名单';
+                    removeFromBlacklistBtn.className = 'remove-from-blacklist-btn hidden'; // 默认隐藏
+                    removeFromBlacklistBtn.style.marginLeft = '10px';
+                    removeFromBlacklistBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        DataManager.cart.remove_from_blacklist(sku);
+                    });
+
                     pOpsDiv.appendChild(addToPlanBtn);
+                    pOpsDiv.appendChild(addToBlacklistBtn);
+                    pOpsDiv.appendChild(removeFromBlacklistBtn);
                 }
             }
+        },
+
+        // 更新黑名单按钮的显隐状态
+        updateBlacklistButtons(sku, isBlacklisted) {
+            if (!sku.element) return;
+            const addBtn = sku.element.querySelector('.add-to-blacklist-btn');
+            const removeBtn = sku.element.querySelector('.remove-from-blacklist-btn');
+            if (addBtn) addBtn.classList.toggle('hidden', isBlacklisted);
+            if (removeBtn) removeBtn.classList.toggle('hidden', !isBlacklisted);
         },
 
         // 显示顶部弹出消息

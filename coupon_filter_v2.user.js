@@ -1,12 +1,11 @@
 // ==UserScript==
-// @name         什么值得买购物车优惠券筛选器 v2
+// @name         coupon_filter_v2
 // @namespace    http://tampermonkey.net/
 // @version      2.0
 // @description  在什么值得买购物车页面根据选中的商品筛选可用的优惠券和优惠活动，并提供凑单建议。
 // @author       You
-// @match        https://cart.smzdm.com/
+// @match        https://cart.jd.com/cart_index*
 // @grant        GM_xmlhttpRequest
-// @connect      *
 // ==/UserScript==
 
 (function() {
@@ -111,7 +110,11 @@
             this.title = title;
             this.skus = []; // 初始化为空，将通过append_sku添加Sku对象
             this.discount = discount;
+            this.discountInfo;
+            this.discountDesc;
             this.quota = quota;
+            this.couponKind;
+            this.couponStyle;
             this.couponIconStyle = iconStyle;
             this.plusStyle = plusStyle;
             this.beginTime = beginTime;
@@ -124,6 +127,10 @@
         hide() { if (this.element) { this.element.classList.add('hidden'); } }
 
         show() { if (this.element) { this.element.classList.remove('hidden'); } }
+
+        disable() { if (this.element) { this.element.disabled = true; } }
+
+        enable() { if (this.element) { this.element.disabled = false; } }
 
         select() {
             this.selected = true;
@@ -143,6 +150,16 @@
             if (sku && !this.skus.some(s => s.id === sku.id)) {
                 this.skus.push(sku);
             }
+        }
+
+        overlaping_coupons(){
+            const overlapCoupons = this.skus.flatMap(sku => sku.coupons);
+            return [...new Set(overlapCoupons)];
+        }
+
+        overlaping_promotions(){
+            const overlapPromotions = this.skus.flatMap(sku => sku.promotions);
+            return [...new Set(overlapPromotions)];
         }
     }
 
@@ -162,6 +179,10 @@
 
         show() { if (this.element) { this.element.classList.remove('hidden'); } }
 
+        disable() { if (this.element) { this.element.disabled = true; } }
+
+        enable() { if (this.element) { this.element.disabled = false; } }
+
         select() {
             this.selected = true;
             if (typeof UIManager.updatePromotionSelection === 'function') {
@@ -180,6 +201,16 @@
             if (sku && !this.skus.some(s => s.id === sku.id)) {
                 this.skus.push(sku);
             }
+        }
+
+        overlaping_coupons(){
+            const overlapCoupons = this.skus.flatMap(sku => sku.coupons);
+            return [...new Set(overlapCoupons)];
+        }
+
+        overlaping_promotions(){
+            const overlapPromotions = this.skus.flatMap(sku => sku.promotions);
+            return [...new Set(overlapPromotions)];
         }
     }
 
@@ -327,7 +358,7 @@
         // 根据传入的SKU列表，筛选出所有可用的优惠券
         filter_coupons_by_skus(skus) {
             if (skus.length === 0) {
-                return [];
+                return this.coupons;
             }
             const selectedSkuIds = new Set(skus.map(s => s.id));
             return this.coupons.filter(coupon => {
@@ -341,7 +372,7 @@
         // 根据传入的SKU列表，筛选出所有可用的促销活动
         filter_promotions_by_skus(skus) {
             if (skus.length === 0) {
-                return [];
+                return this.promotions;
             }
             const selectedSkuIds = new Set(skus.map(s => s.id));
             return this.promotions.filter(promo => {
@@ -459,7 +490,8 @@
             // 4. 创建并添加方案
             const finalPlan = new Plan(null, planSkus, selectedCoupons, this.get_selected_promotions());
             this.add_plan(finalPlan);
-        },
+        }
+
         async llm_recommend_bargain_skus() {
             const selectedCoupons = this.get_selected_coupons();
             const selectedPromotions = this.get_selected_promotions();
@@ -549,9 +581,25 @@
 
         hide_all_skus() {
             this.skus.forEach(sku => sku.hide());
+            document.querySelectorAll('.cart-tbody').forEach(x => x.classList.add('hidden'));
         }
         show_all_skus() {
             this.skus.forEach(sku => sku.show());
+            document.querySelectorAll('.cart-tbody').forEach(x => x.classList.remove('hidden'));
+        }
+
+        disable_all_coupons() {
+            this.coupons.forEach(coupon => coupon.disable());
+        }
+        disable_all_promotions() {
+            this.promotions.forEach(promotion => promotion.disable());
+        }
+
+        enable_all_coupons() {
+            this.coupons.forEach(coupon => coupon.enable());
+        }
+        enable_all_promotions() {
+            this.promotions.forEach(promotion => promotion.enable());
         }
 
         select_plan(planToSelect) {
@@ -565,59 +613,6 @@
         }
     }
 
-    // --- 模块：API处理器 ---
-
-    const APIHandler = {
-        // URL片段到具体数据处理函数的映射
-        // 注意：必须.bind(DataManager)来确保处理器内部的this指向正确
-        apiMap: {
-            'pcCart_jc_getCurrentCart': DataManager.processCartData.bind(DataManager),
-            'pcCart_jc_cartCouponList': DataManager.processCouponData.bind(DataManager)
-        },
-
-        init() {
-            console.log("APIHandler initialized");
-            this.proxyXHR();
-        },
-
-        proxyXHR() {
-            const open = XMLHttpRequest.prototype.open;
-            const send = XMLHttpRequest.prototype.send;
-            const self = this;
-
-            XMLHttpRequest.prototype.open = function(method, url) {
-                this._url = url;
-                this._dataProcessor = null; // 初始化数据处理器
-
-                const matchedKeys = Object.keys(self.apiMap).filter(key => url.includes(key));
-
-                if (matchedKeys.length > 0) {
-                    const key = matchedKeys[0];
-                    this._dataProcessor = self.apiMap[key]; // 获取对应的、已绑定上下文的处理函数
-                }
-
-                return open.apply(this, arguments);
-            };
-
-            XMLHttpRequest.prototype.send = function() {
-                if (this._dataProcessor) { // 如果在open时找到了对应的处理器
-                    this.addEventListener("load", function() {
-                        if (this.status === 200) {
-                            try {
-                                const data = JSON.parse(this.responseText);
-                                // 直接调用附加在XHR对象上的数据处理函数
-                                this._dataProcessor(data);
-                            } catch (error) {
-                                console.error("Error parsing API response:", error);
-                                UIManager.showMessage("解析API数据时出错，部分功能可能异常。", "error");
-                            }
-                        }
-                    });
-                }
-                return send.apply(this, arguments);
-            };
-        }
-    };
 
     // --- 模块：数据管理器 ---
     const DataManager = {
@@ -642,7 +637,13 @@
                 // 1. 查找或创建 Sku 对象
                 let sku = this.cart.get_sku(itemData.Id);
                 if (!sku) {
-                    sku = new Sku(itemData.Id, itemData.Name, itemData.Price, itemData.Num);
+                    let realPrice;
+                    if(itemData.PriceShow !== null){
+                        realPrice = parseFloat(itemData.PriceShow.replace(/[^\d.]/g, ''));
+                    }else{
+                        realPrice = itemData.Price;
+                    }
+                    sku = new Sku(itemData.Id, itemData.Name, realPrice, itemData.Num);
                     this.cart.skus.push(sku);
                 }
 
@@ -700,7 +701,7 @@
                                 handleItemData(subItem.item);
                             }
                         }
-                    } 
+                    }
                     // 单个商品
                     else if (sortItem.item) {
                         handleItemData(sortItem.item);
@@ -738,7 +739,7 @@
                 if (!coupon) {
                     coupon = new Coupon(
                         couponData.couponId,
-                        couponData.name,
+                        couponData.discountDesc?couponData.discountDesc:couponData.name,
                         [], // skus 列表将通过 append_sku 填充
                         couponData.discount,
                         couponData.quota,
@@ -769,6 +770,66 @@
         }
     };
 
+    // --- 模块：API处理器 ---
+
+    const APIHandler = {
+        apiEndpoint: 'api.m.jd.com/api',
+        apiMap: {
+            'pcCart_jc_getCurrentCart': DataManager.processCartData.bind(DataManager),
+            'pcCart_jc_cartCouponList': DataManager.processCouponData.bind(DataManager)
+        },
+
+        init() {
+            console.log("APIHandler initialized");
+            this.proxyXHR();
+        },
+
+        proxyXHR() {
+            const open = XMLHttpRequest.prototype.open;
+            const send = XMLHttpRequest.prototype.send;
+            const self = this;
+
+            XMLHttpRequest.prototype.open = function(method, url) {
+                this._dataProcessor = null; // 初始化
+
+                if (url.includes(self.apiEndpoint)) {
+                    let match;
+                    if(this.config?.body && typeof this.config.body === 'string'){
+                        match = this.config.body.match(/functionId=([^&]+)/);
+                    }else{
+                        match = url.match(/functionId=([^&]+)/);
+                    }
+
+                    if (match && match[1]) {
+                        const functionId = match[1];
+                        if (self.apiMap[functionId]) {
+                            this._dataProcessor = self.apiMap[functionId];
+                        }
+                    }
+                }
+                return open.apply(this, arguments);
+            };
+
+            XMLHttpRequest.prototype.send = function() {
+                if (this._dataProcessor) {
+                    this.addEventListener("load", function() {
+                        if (this.status === 200) {
+                            try {
+                                const data = JSON.parse(this.responseText);
+                                this._dataProcessor(data);
+                            } catch (error) {
+                                console.error("Error parsing API response:", error);
+                                UIManager.showMessage("解析API数据时出错，部分功能可能异常。", "error");
+                            }
+                        }
+                    });
+                }
+                return send.apply(this, arguments);
+            };
+        }
+    };
+
+
     // --- 模块：UI管理器 ---
     const UIManager = {
         init() {
@@ -791,9 +852,10 @@
                 }
                 .coupon-list, .promotion-list { display: flex; flex-wrap: wrap; gap: 8px; }
                 .coupon-btn, .promo-btn {
-                    padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; user-select: none;
+                    padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; user-select: none; background-color: #fff;
                 }
                 .coupon-btn.selected, .promo-btn.selected { border-color: #e4393c; border-width: 2px; padding: 3px 7px; }
+                .plan-coupon {padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;}
                 .plan-item { display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #f0f0f0; }
                 .plan-skus { flex-grow: 1; display: flex; gap: 5px; overflow-x: auto; }
                 .plan-sku-item { position: relative; cursor: pointer; }
@@ -809,26 +871,26 @@
 
         // 注入UI容器
         injectContainers() {
-            const toolbarWrap = document.querySelector('.toolbar-wrap');
+            const toolbarCenter = document.querySelector('.toolbar-center');
             const cartCountDetail = document.querySelector('.cart_count_detail');
 
-            if (toolbarWrap) {
+            if (toolbarCenter) {
                 const couponContainer = document.createElement('div');
                 couponContainer.className = 'coupon-filter-container';
                 couponContainer.innerHTML = '<div class="coupon-list"></div>';
-                toolbarWrap.parentNode.insertBefore(couponContainer, toolbarWrap.nextSibling);
+                toolbarCenter.appendChild(couponContainer);
 
                 const promotionContainer = document.createElement('div');
                 promotionContainer.className = 'promotion-filter-container';
                 promotionContainer.innerHTML = '<div class="promotion-list"></div>';
-                couponContainer.parentNode.insertBefore(promotionContainer, couponContainer.nextSibling);
+                toolbarCenter.appendChild(promotionContainer);
             }
 
             if (cartCountDetail) {
                 const planContainer = document.createElement('div');
                 planContainer.className = 'plan-container';
                 planContainer.innerHTML = '<div class="plan-list"></div>';
-                cartCountDetail.parentNode.insertBefore(planContainer, cartCountDetail);
+                cartCountDetail.insertBefore(planContainer, cartCountDetail.firstChild);
             }
         },
 
@@ -839,13 +901,15 @@
             couponListDiv.innerHTML = ''; // 清空旧内容
 
             for (const coupon of DataManager.cart.coupons) {
-                const btn = document.createElement('div');
+                const btn = document.createElement('button');
                 btn.className = 'coupon-btn';
-                btn.textContent = coupon.title;
+                btn.textContent = `${coupon.quota}-${coupon.discount}`;
+                btn.title = coupon.title;
                 coupon.element = btn; // 关联DOM元素
 
                 btn.addEventListener('click', () => {
                     coupon.selected ? coupon.unselect() : coupon.select();
+                    UIManager.updateOverlapCouponAndPromotion();
                 });
 
                 couponListDiv.appendChild(btn);
@@ -859,13 +923,14 @@
             promoListDiv.innerHTML = ''; // 清空旧内容
 
             for (const promotion of DataManager.cart.promotions) {
-                const btn = document.createElement('div');
+                const btn = document.createElement('button');
                 btn.className = 'promo-btn';
                 btn.textContent = promotion.title || promotion.STip;
                 promotion.element = btn; // 关联DOM元素
 
                 btn.addEventListener('click', () => {
                     promotion.selected ? promotion.unselect() : promotion.select();
+                    UIManager.updateOverlapCouponAndPromotion();
                 });
 
                 promoListDiv.appendChild(btn);
@@ -880,6 +945,18 @@
             this.applySkuFilters();
         },
 
+        enableOverlapSelectedCoupons() {
+            const selectedCoupons = DataManager.cart.get_selected_coupons();
+            if (selectedCoupons.length === 0) {
+                DataManager.cart.enable_all_coupons();
+            }else{
+                selectedCoupons.forEach(coupon => {
+                    coupon.overlaping_coupons().forEach(x => x.enable());
+                    coupon.overlaping_promotions().forEach(x => x.enable());
+                });
+            }
+        },
+
         // 更新优惠活动按钮的选中状态
         updatePromotionSelection(promotion) {
             if (promotion.element) {
@@ -888,12 +965,35 @@
             this.applySkuFilters();
         },
 
+        enableOverlapSelectedPromotions(){
+            const selectedPromotions = DataManager.cart.get_selected_promotions();
+            if (selectedPromotions.length === 0) {
+                DataManager.cart.enable_all_promotions();
+            }else{
+                selectedPromotions.forEach(promotion => {
+                    promotion.overlaping_coupons().forEach(x => x.enable());
+                    promotion.overlaping_promotions().forEach(x => x.enable());
+                });
+            }
+        },
+
+        updateOverlapCouponAndPromotion(){
+            DataManager.cart.disable_all_coupons();
+            DataManager.cart.disable_all_promotions();
+            this.enableOverlapSelectedCoupons();
+            this.enableOverlapSelectedPromotions();
+        },
+
         // 应用所有SKU筛选器并更新UI
         applySkuFilters() {
             const finalSkus = DataManager.cart.filter_skus_by_coupons_and_promotions();
-            
+
             DataManager.cart.hide_all_skus();
-            finalSkus.forEach(sku => sku.show());
+            finalSkus.forEach(sku => {
+                sku.show();
+                const shop = sku.element.closest('.cart-tbody');
+                shop.classList.remove('hidden');
+            });
         },
 
         // 监听商品选中状态的变化
@@ -957,6 +1057,7 @@
             getCouponsBtn.style.marginLeft = '10px';
             getCouponsBtn.addEventListener('click', (e) => {
                 e.preventDefault();
+                UIManager.renderPromotions();
                 const allCouponBtns = document.querySelectorAll('.shop-coupon-btn');
                 let index = 0;
                 function clickNext() {
@@ -1090,7 +1191,7 @@
             popup.className = 'cart-filter-top-popup';
             // 根据消息类型可以添加不同的class，例如 cart-filter-top-popup-warning
             popup.innerHTML = `<span class="iconjj"></span><span>${message}</span><i class="icon-popup-cls"></i>`;
-            
+
             optionsBox.parentNode.insertBefore(popup, optionsBox.nextSibling);
 
             const close = () => popup.remove();
@@ -1241,7 +1342,7 @@
                 realPriceEl.textContent = `¥${plan.real_price.toFixed(2)}`;
             }
             if (discountEl && plan.total_price > 0 && plan.real_price > 0) {
-                const discountPercent = ((plan.total_price - plan.real_price) / plan.total_price) * 100;
+                const discountPercent = (plan.real_price / plan.total_price) * 100;
                 discountEl.textContent = `${discountPercent.toFixed(1)}%`;
             }
         }
@@ -1252,15 +1353,15 @@
         console.log("脚本启动");
         APIHandler.init();
         DataManager.init();
-        UIManager.init();
     }
 
     // --- 启动脚本 ---
+    main();
     // 使用MutationObserver确保在页面加载完成后执行
     const observer = new MutationObserver((mutations, obs) => {
         // 寻找一个页面加载完成的标志性元素，例如购物车列表
-        if (document.querySelector('.cart-tbody')) {
-            main();
+        if (document.querySelector('.operation')) {
+            UIManager.init();
             obs.disconnect(); // 找到后停止观察，避免重复执行
         }
     });
@@ -1271,3 +1372,4 @@
     });
 
 })();
+

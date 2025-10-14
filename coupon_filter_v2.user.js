@@ -1028,18 +1028,6 @@
             this.applySkuFilters();
         },
 
-        enableOverlapSelectedCoupons() {
-            const selectedCoupons = DataManager.cart.get_selected_coupons();
-            if (selectedCoupons.length === 0) {
-                DataManager.cart.enable_all_coupons();
-            }else{
-                selectedCoupons.forEach(coupon => {
-                    coupon.overlaping_coupons().forEach(x => x.enable());
-                    coupon.overlaping_promotions().forEach(x => x.enable());
-                });
-            }
-        },
-
         // 更新优惠活动按钮的选中状态
         updatePromotionSelection(promotion) {
             if (promotion.element) {
@@ -1048,23 +1036,31 @@
             this.applySkuFilters();
         },
 
-        enableOverlapSelectedPromotions(){
-            const selectedPromotions = DataManager.cart.get_selected_promotions();
-            if (selectedPromotions.length === 0) {
-                DataManager.cart.enable_all_promotions();
-            }else{
-                selectedPromotions.forEach(promotion => {
-                    promotion.overlaping_coupons().forEach(x => x.enable());
-                    promotion.overlaping_promotions().forEach(x => x.enable());
-                });
-            }
-        },
-
         updateOverlapCouponAndPromotion(){
             DataManager.cart.disable_all_coupons();
             DataManager.cart.disable_all_promotions();
-            this.enableOverlapSelectedCoupons();
-            this.enableOverlapSelectedPromotions();
+
+            const selectedCoupons = DataManager.cart.get_selected_coupons();
+            const selectedPromotions = DataManager.cart.get_selected_promotions();
+
+            const overlapCoupons = [...new Set([
+                ...selectedCoupons.flatMap(x => x.overlaping_coupons()),
+                ...selectedPromotions.flatMap(x => x.overlaping_coupons())])];
+            const overlapPromotions = [...new Set([
+                ...selectedCoupons.flatMap(x => x.overlaping_promotions()),
+                ...selectedPromotions.flatMap(x => x.overlaping_promotions())])];
+
+            if (overlapCoupons.length === 0) {
+                DataManager.cart.enable_all_coupons();
+            }else{
+                overlapCoupons.forEach(x => x.enable());
+            }
+
+            if (overlapPromotions.length === 0) {
+                DataManager.cart.enable_all_promotions();
+            }else{
+                overlapPromotions.forEach(x => x.enable());
+            }
         },
 
         // 应用所有SKU筛选器并更新UI
@@ -1141,6 +1137,7 @@
             getCouponsBtn.addEventListener('click', (e) => {
                 e.preventDefault();
 
+                UIManager.renderPromotions();
                 const buttonsToClick = [];
                 const allShopCouponBtns = document.querySelectorAll('.shop-coupon-btn');
 
@@ -1181,11 +1178,12 @@
             // 2. 创建“取消选中所有商品”按钮
             const unselectAllBtn = document.createElement('a');
             unselectAllBtn.href = '#none';
-            unselectAllBtn.innerText = '取消全选';
+            unselectAllBtn.innerText = '取消选中所有商品';
             unselectAllBtn.style.marginLeft = '10px';
             unselectAllBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 DataManager.cart.unselect_all_skus();
+                UIManager.updateAvailableFilters();
             });
 
             // 3. 创建“取消选中所有优惠”按钮
@@ -1197,6 +1195,8 @@
                 e.preventDefault();
                 DataManager.cart.unselect_all_coupons();
                 DataManager.cart.unselect_all_promotions();
+                DataManager.cart.enable_all_coupons();
+                DataManager.cart.enable_all_promotions();
             });
 
             // 4. 创建“凑单”按钮

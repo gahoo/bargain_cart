@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         coupon_filter_v2
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  在什么值得买购物车页面根据选中的商品筛选可用的优惠券和优惠活动，并提供凑单建议。
 // @author       You
 // @match        https://cart.jd.com/cart_index*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
 // ==/UserScript==
 
 (function() {
@@ -16,6 +18,8 @@
     const LLM_API_URL = ''; // 在此填入你的LLM API URL, 例如 https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
     const LLM_API_KEY = ''; // 在此填入你的LLM API KEY
     const LLM_MODEL = 'gemini-1.5-flash'; // 你希望使用的模型
+    const CACHE_DURATION_SECONDS = 600; // 缓存有效期（10分钟）
+    const CACHE_KEY_PREFIX = "coupon_cache_"; // 缓存键前缀
 
     // --- 工具函数 ---
     function addGlobalStyle(css) {
@@ -25,6 +29,73 @@
         style.innerHTML = css;
         head.appendChild(style);
     }
+
+    function getVendorIdFromRequestBody(bodyString) {
+        if (!bodyString || typeof bodyString !== 'string') {
+            return null;
+        }
+        try {
+            // 1. 从完整的查询字符串中提取 body=... 部分的值
+            const bodyMatch = bodyString.match(/body=([^&]+)/);
+            if (!bodyMatch || !bodyMatch[1]) {
+                console.warn("在请求体中未找到 body=... 参数。");
+                return null;
+            }
+            const encodedJson = bodyMatch[1];
+
+            // 2. URL解码
+            const decodedString = decodeURIComponent(encodedJson);
+
+            // 3. 解析JSON
+            const dataObject = JSON.parse(decodedString);
+
+            // 4. 提取venderId
+            const vendorId = dataObject?.cartExt?.venderId;
+            return vendorId || null;
+
+        } catch (error) {
+            console.error("从请求体解析 Vendor ID 时出错:", error);
+            return null;
+        }
+    }
+
+    // --- 模块：缓存管理器 ---
+    const CacheManager = {
+        set(key, value) {
+            try {
+                const cacheData = {
+                    data: value,
+                    timestamp: new Date().getTime()
+                };
+                GM_setValue(key, JSON.stringify(cacheData));
+            } catch (e) {
+                console.error("CacheManager.set failed:", e);
+            }
+        },
+
+        get(key, maxAgeInSeconds) {
+            try {
+                const storedValue = GM_getValue(key, null);
+                if (!storedValue) {
+                    return null;
+                }
+
+                const cacheData = JSON.parse(storedValue);
+                const now = new Date().getTime();
+                const cacheAge = (now - cacheData.timestamp) / 1000;
+
+                if (cacheAge > maxAgeInSeconds) {
+                    console.log(`[Cache] Cache expired for key: ${key}`);
+                    return null;
+                }
+
+                return cacheData.data;
+            } catch (e) {
+                console.error("CacheManager.get failed:", e);
+                return null;
+            }
+        }
+    };
 
     // --- 数据模型 ---
     class Sku {
@@ -791,6 +862,7 @@
 
             XMLHttpRequest.prototype.open = function(method, url) {
                 this._dataProcessor = null; // 初始化
+                this._vendorId = null; // 初始化vendorId
 
                 if (url.includes(self.apiEndpoint)) {
                     let match;
@@ -804,6 +876,10 @@
                         const functionId = match[1];
                         if (self.apiMap[functionId]) {
                             this._dataProcessor = self.apiMap[functionId];
+                            // 如果是获取优惠券的请求，则解析并存储vendorId
+                            if (functionId === 'pcCart_jc_cartCouponList' && this.config?.body) {
+                                this._vendorId = getVendorIdFromRequestBody(this.config.body);
+                            }
                         }
                     }
                 }
@@ -816,6 +892,13 @@
                         if (this.status === 200) {
                             try {
                                 const data = JSON.parse(this.responseText);
+
+                                // 如果之前已成功解析并存储了vendorId，则将响应写入缓存
+                                if (this._vendorId) {
+                                    console.log(`[Cache] Writing to cache for vendor: ${this._vendorId}`);
+                                    CacheManager.set(CACHE_KEY_PREFIX + this._vendorId, data);
+                                }
+
                                 this._dataProcessor(data);
                             } catch (error) {
                                 console.error("Error parsing API response:", error);
@@ -1057,16 +1140,42 @@
             getCouponsBtn.style.marginLeft = '10px';
             getCouponsBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-                UIManager.renderPromotions();
-                const allCouponBtns = document.querySelectorAll('.shop-coupon-btn');
-                let index = 0;
-                function clickNext() {
-                    if (index >= allCouponBtns.length) return;
-                    allCouponBtns[index].click();
-                    index++;
-                    setTimeout(clickNext, CLICK_DELAY);
+
+                const buttonsToClick = [];
+                const allShopCouponBtns = document.querySelectorAll('.shop-coupon-btn');
+
+                allShopCouponBtns.forEach(btn => {
+                    const shopContainer = btn.closest('.shop');
+                    if (!shopContainer) return;
+
+                    const shopNameLink = shopContainer.querySelector('.shop-name');
+                    if (!shopNameLink || !shopNameLink.dataset.vendorid) return;
+
+                    const vendorId = shopNameLink.dataset.vendorid;
+                    const cachedData = CacheManager.get(CACHE_KEY_PREFIX + vendorId, CACHE_DURATION_SECONDS);
+
+                    if (cachedData) {
+                        // 缓存命中
+                        console.log(`[Cache] Cache hit for vendor: ${vendorId}. Processing from cache.`);
+                        DataManager.processCouponData(cachedData);
+                    } else {
+                        // 缓存未命中
+                        console.log(`[Cache] Cache miss for vendor: ${vendorId}. Adding to click queue.`);
+                        buttonsToClick.push(btn);
+                    }
+                });
+
+                // 仅当有需要点击的按钮时，才启动延时点击循环
+                if (buttonsToClick.length > 0) {
+                    let index = 0;
+                    function clickNext() {
+                        if (index >= buttonsToClick.length) return;
+                        buttonsToClick[index].click();
+                        index++;
+                        setTimeout(clickNext, CLICK_DELAY);
+                    }
+                    clickNext();
                 }
-                clickNext();
             });
 
             // 2. 创建“取消选中所有商品”按钮

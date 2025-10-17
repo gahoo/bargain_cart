@@ -17,8 +17,8 @@
     const CLICK_DELAY = 800; // 领券点击延迟（毫秒）
     const LLM_API_URL = ''; // 在此填入你的LLM API URL, 例如 https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
     const LLM_API_KEY = ''; // 在此填入你的LLM API KEY
-    const LLM_MODEL = 'gemini-1.5-flash'; // 你希望使用的模型
-    const CACHE_DURATION_SECONDS = 600; // 缓存有效期（10分钟）
+    const LLM_MODEL = 'gemini-2.5-flash'; // 你希望使用的模型
+    const CACHE_DURATION_SECONDS = 1800; // 缓存有效期（30分钟）
     const CACHE_KEY_PREFIX = "coupon_cache_"; // 缓存键前缀
 
     // --- 工具函数 ---
@@ -97,13 +97,66 @@
         }
     };
 
+    // --- 模块：CartAction 辅助器 ---
+    const CartActionHelper = {
+        _getArea() {
+            const areaElement = document.querySelector('div.ui-area-text');
+            if (areaElement && areaElement.dataset.id) {
+                return areaElement.dataset.id.replaceAll('-', '_');
+            }
+            console.warn("CartActionHelper: Could not determine area from 'div.ui-area-text'. Using default.");
+            return '1_72_2799_0'; // Default fallback
+        },
+
+        execute(action, params) {
+            if (typeof unsafeWindow.CartAction !== 'function') {
+                return; // Fail silently as requested
+            }
+            unsafeWindow.CartAction(action, params);
+        },
+
+        _buildSkuParams(skus) {
+            const TheSkus = skus.map(sku => ({
+                "Id": sku.id,
+                "num": sku.quantity,
+                "skuUuid": sku.skuUuid,
+                "useUuid": sku.useUuid || false
+            }));
+
+            return {
+                'RequestParam': {
+                    'operations': [{ "TheSkus": TheSkus }],
+                    'serInfo': {
+                        "area": this._getArea()
+                    }
+                }
+            };
+        },
+
+        checkSkus(skus) {
+            const params = this._buildSkuParams(skus);
+            this.execute('OPT_CARTCHECKONE', params);
+        },
+
+        uncheckSkus(skus) {
+            const params = this._buildSkuParams(skus);
+            this.execute('OPT_CARTUNCHECKONE', params);
+        },
+
+        uncheckAllSkus() {
+            this.execute('OPT_CARTCHECKUNALL');
+        }
+    };
+
     // --- 数据模型 ---
     class Sku {
-        constructor(id, name, price, quantity) {
+        constructor(id, name, price, quantity, skuUuid, useUuid) {
             this.id = id;
             this.name = name;
             this.price = price;
             this.quantity = quantity;
+            this.skuUuid = skuUuid;
+            this.useUuid = useUuid;
             this.element = this._findElement();
             this.coupons = [];
             this.promotions = [];
@@ -299,17 +352,6 @@
 
         _calculateTotalPrice() {
             return this.skus.reduce((total, sku) => total + (sku.price * sku.quantity), 0);
-        }
-
-        apply() {
-            this.skus.forEach(sku => sku.select());
-            if (typeof UIManager.fetchRealPriceForPlan === 'function') {
-                UIManager.fetchRealPriceForPlan(this);
-            }
-        }
-
-        unapply() {
-            this.skus.forEach(sku => sku.unselect());
         }
 
         add_sku(sku) {
@@ -641,7 +683,7 @@
 
         // --- Global Actions ---
         unselect_all_skus() {
-            this.skus.forEach(sku => sku.unselect());
+            CartActionHelper.uncheckAllSkus();
         }
         unselect_all_coupons() {
             this.coupons.forEach(coupon => coupon.unselect());
@@ -694,6 +736,41 @@
             this.cart = new Cart();
         },
 
+        // 新增：数据提取层
+        getCartSkuSelection(data) {
+            const selectedSkuIds = new Set();
+            const cartInfo = data?.resultData?.cartInfo;
+            if (!cartInfo || !cartInfo.vendors) return selectedSkuIds;
+
+            for (const vendor of cartInfo.vendors) {
+                if (!vendor.sorted) continue;
+                for (const sortItem of vendor.sorted) {
+                    const itemsToCheck = sortItem.item?.items?.length > 0
+                        ? sortItem.item.items.map(sub => sub.item)
+                        : [sortItem.item];
+
+                    for (const item of itemsToCheck) {
+                        if (item && item.CheckType === 1) {
+                            selectedSkuIds.add(item.Id);
+                        }
+                    }
+                }
+            }
+            return selectedSkuIds;
+        },
+
+        // 新增：状态更新层
+        updateCartSkuSelection(selectedSkuIds) {
+            if (!this.cart || !this.cart.skus) return;
+
+            this.cart.skus.forEach(sku => {
+                sku.selected = selectedSkuIds.has(sku.id);
+            });
+
+            // 更新UI
+            UIManager.updateAvailableFilters();
+        },
+
         // 处理来自 pcCart_jc_getCurrentCart 的数据
         processCartData(data) {
             console.log("Processing Cart Data:", data);
@@ -714,7 +791,7 @@
                     }else{
                         realPrice = itemData.Price;
                     }
-                    sku = new Sku(itemData.Id, itemData.Name, realPrice, itemData.Num);
+                    sku = new Sku(itemData.Id, itemData.Name, realPrice, itemData.Num, itemData.skuUuid, itemData.useUuid);
                     this.cart.skus.push(sku);
                 }
 
@@ -838,6 +915,43 @@
 
             // 重新渲染优惠券区域
             UIManager.renderCoupons();
+        },
+
+
+
+        processCartCheckSingle(data) {
+            const selectedSkuIds = this.getCartSkuSelection(data);
+            this.updateCartSkuSelection(selectedSkuIds); // 同步状态和UI
+
+            const activePlan = this.cart.get_selected_plan();
+
+            if (activePlan) {
+                const planSkuIds = new Set(activePlan.skus.map(s => s.id));
+                const cartInfo = data?.resultData?.cartInfo;
+
+                // 完整的ID集合比对
+                if (cartInfo && selectedSkuIds.size === planSkuIds.size && [...selectedSkuIds].every(id => planSkuIds.has(id))) {
+                    // 更新价格
+                    const newTotalPrice = cartInfo.Price; // Price is already a float
+                    const newRealPrice = parseFloat(cartInfo.PriceShow.replace(/[^\d.]/g, ''));
+
+                    if (!isNaN(newTotalPrice) && !isNaN(newRealPrice)) {
+                        activePlan.total_price = newTotalPrice;
+                        activePlan.real_price = newRealPrice;
+                        UIManager.updatePlanPriceDisplay(activePlan);
+                    }
+                }
+            }
+        },
+
+        processCartUnCheckSingle(data) {
+            const selectedSkuIds = this.getCartSkuSelection(data);
+            this.updateCartSkuSelection(selectedSkuIds);
+        },
+
+        processCartUnCheckAll(data) {
+            const selectedSkuIds = this.getCartSkuSelection(data);
+            this.updateCartSkuSelection(selectedSkuIds);
         }
     };
 
@@ -847,7 +961,10 @@
         apiEndpoint: 'api.m.jd.com/api',
         apiMap: {
             'pcCart_jc_getCurrentCart': DataManager.processCartData.bind(DataManager),
-            'pcCart_jc_cartCouponList': DataManager.processCouponData.bind(DataManager)
+            'pcCart_jc_cartCouponList': DataManager.processCouponData.bind(DataManager),
+            'pcCart_jc_cartCheckSingle': DataManager.processCartCheckSingle.bind(DataManager),
+            'pcCart_jc_cartUnCheckSingle': DataManager.processCartUnCheckSingle.bind(DataManager),
+            'pcCart_jc_cartUnCheckAll': DataManager.processCartUnCheckAll.bind(DataManager)
         },
 
         init() {
@@ -920,7 +1037,6 @@
             this.injectCoreStyles();
             this.injectContainers();
             this.injectButtons();
-            this.listenSkuSelectionChanges();
         },
 
         // 注入脚本所需的核心CSS
@@ -940,6 +1056,7 @@
                 .coupon-btn.selected, .promo-btn.selected { border-color: #e4393c; border-width: 2px; padding: 3px 7px; }
                 .plan-coupon {padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;}
                 .plan-item { display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #f0f0f0; }
+                .plan-apply-checkbox { margin-right: 10px; flex-shrink: 0; }
                 .plan-skus { flex-grow: 1; display: flex; gap: 5px; overflow-x: auto; }
                 .plan-sku-item { position: relative; cursor: pointer; }
                 .plan-sku-img { width: 60px; height: 60px; border: 1px solid #eee; display: block; }
@@ -1075,26 +1192,7 @@
             });
         },
 
-        // 监听商品选中状态的变化
-        listenSkuSelectionChanges() {
-            const mainLeft = document.querySelector('.main_left');
-            if (!mainLeft) return;
 
-            mainLeft.addEventListener('change', (e) => {
-                const target = e.target;
-                // 确保是商品行的checkbox，而不是全选框
-                if (target.matches('.p-checkbox .jdcheckbox')) {
-                    const skuElement = target.closest('.item-item');
-                    if (skuElement && skuElement.dataset.sku) {
-                        const sku = DataManager.cart.get_sku(skuElement.dataset.sku);
-                        if (sku) {
-                            sku.selected = target.checked;
-                            this.updateAvailableFilters();
-                        }
-                    }
-                }
-            });
-        },
 
         // 根据当前选中的商品，更新可用的优惠券和促销活动UI
         updateAvailableFilters() {
@@ -1183,7 +1281,6 @@
             unselectAllBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 DataManager.cart.unselect_all_skus();
-                UIManager.updateAvailableFilters();
             });
 
             // 3. 创建“取消选中所有优惠”按钮
@@ -1326,10 +1423,11 @@
             plan.element = planElement;
 
             // 构建优惠券和促销的HTML
-            const couponsHtml = plan.coupons.map(c => `<span class="plan-coupon">${c.title}</span>`).join('');
+            const couponsHtml = plan.coupons.map(c => `<span class="plan-coupon">${c.quota}-${c.discount}</span>`).join('');
             const promosHtml = plan.promotions.map(p => `<span class="plan-promo">${p.title || p.STip}</span>`).join('');
 
             planElement.innerHTML = `
+                <input type="checkbox" class="plan-apply-checkbox">
                 <div class="plan-coupons-promotions">${couponsHtml} ${promosHtml}</div>
                 <div class="plan-skus"></div>
                 <div class="plan-info">
@@ -1338,7 +1436,6 @@
                     <div>折扣: <span class="discount-percent">-</span></div>
                 </div>
                 <div class="plan-actions">
-                    <button class="apply-plan-btn">应用</button>
                     <button class="remove-plan-btn">移除</button>
                 </div>
             `;
@@ -1350,9 +1447,25 @@
             }
 
             // 绑定事件
-            planElement.querySelector('.apply-plan-btn').addEventListener('click', () => plan.apply());
+            const checkbox = planElement.querySelector('.plan-apply-checkbox');
+            checkbox.addEventListener('change', (e) => {
+                DataManager.cart.select_plan(plan); // Select this plan first
+                if (e.target.checked) {
+                    CartActionHelper.checkSkus(plan.skus);
+                } else {
+                    CartActionHelper.uncheckSkus(plan.skus);
+                }
+            });
+
             planElement.querySelector('.remove-plan-btn').addEventListener('click', () => DataManager.cart.remove_plan(plan));
-            planElement.addEventListener('click', () => DataManager.cart.select_plan(plan));
+
+            planElement.addEventListener('click', (e) => {
+                if (e.target.matches('.plan-apply-checkbox, .remove-plan-btn, .remove-sku-btn')) {
+                    return;
+                }
+                DataManager.cart.select_plan(plan);
+            });
+
 
             planListDiv.appendChild(planElement);
         },
@@ -1406,37 +1519,6 @@
                 skuDiv.remove();
             }
         },
-        // 应用方案后，监听价格变化并更新UI
-        fetchRealPriceForPlan(plan) {
-            const priceContainer = document.querySelector('.cart_count_detail');
-            if (!priceContainer) return;
-
-            const observer = new MutationObserver(() => {
-                const totalPriceEl = priceContainer.querySelector('.num_cont .num');
-                const realPriceEl = priceContainer.querySelector('.redPrice');
-
-                if (totalPriceEl && realPriceEl) {
-                    const newTotalText = totalPriceEl.textContent.replace(/[^\d.]/g, '');
-                    const newRealText = realPriceEl.textContent.replace(/[^\d.]/g, '');
-                    const newTotalPrice = parseFloat(newTotalText);
-                    const newRealPrice = parseFloat(newRealText);
-
-                    if (!isNaN(newTotalPrice) && !isNaN(newRealPrice)) {
-                        plan.total_price = newTotalPrice;
-                        plan.real_price = newRealPrice;
-                        this.updatePlanPriceDisplay(plan);
-                        observer.disconnect();
-                    }
-                }
-            });
-
-            observer.observe(priceContainer, { childList: true, characterData: true, subtree: true });
-
-            setTimeout(() => {
-                observer.disconnect();
-            }, 5000); // 5秒超时
-        },
-
         // 更新方案UI上的价格显示
         updatePlanPriceDisplay(plan) {
             if (!plan.element) return;

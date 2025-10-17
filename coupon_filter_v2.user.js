@@ -1057,11 +1057,35 @@
         injectCoreStyles() {
             addGlobalStyle(`
                 .hidden { display: none !important; }
-                .coupon-filter-container, .promotion-filter-container, .plan-container {
+                .coupon-filter-container, .promotion-filter-container {
                     margin: 10px 0;
                     padding: 10px;
                     border: 1px solid #ddd;
                     border-radius: 5px;
+                    max-height: 20px; /* Enough for one line of buttons */
+                    overflow: hidden;
+                    transition: max-height 0.5s ease-in-out;
+                    cursor: pointer;
+                }
+                .coupon-filter-container:hover, .promotion-filter-container:hover,
+                .coupon-filter-container:focus-within, .promotion-filter-container:focus-within {
+                    max-height: 250px; /* Large enough for many coupons/promos */
+                    overflow-y: auto;
+                }
+
+                .plan-container {
+                    margin: 10px 0;
+                    padding: 10px;
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    max-height: 90px; /* Enough for one plan item */
+                    overflow: hidden;
+                    transition: max-height 0.5s ease-in-out;
+                    cursor: pointer;
+                }
+                .plan-container:hover, .plan-container:focus-within {
+                    max-height: 280px; /* Large enough for many plans */
+                    overflow-y: auto;
                 }
                 .coupon-list, .promotion-list { display: flex; flex-wrap: wrap; gap: 8px; }
                 .coupon-btn, .promo-btn {
@@ -1092,11 +1116,13 @@
                 const couponContainer = document.createElement('div');
                 couponContainer.className = 'coupon-filter-container';
                 couponContainer.innerHTML = '<div class="coupon-list"></div>';
+                couponContainer.tabIndex = 0;
                 toolbarCenter.appendChild(couponContainer);
 
                 const promotionContainer = document.createElement('div');
                 promotionContainer.className = 'promotion-filter-container';
                 promotionContainer.innerHTML = '<div class="promotion-list"></div>';
+                promotionContainer.tabIndex = 0;
                 toolbarCenter.appendChild(promotionContainer);
             }
 
@@ -1104,6 +1130,7 @@
                 const planContainer = document.createElement('div');
                 planContainer.className = 'plan-container';
                 planContainer.innerHTML = '<div class="plan-list"></div>';
+                planContainer.tabIndex = 0;
                 cartCountDetail.insertBefore(planContainer, cartCountDetail.firstChild);
             }
         },

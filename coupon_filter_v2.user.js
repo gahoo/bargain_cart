@@ -508,6 +508,30 @@
             });
         }
 
+        filter_skus_by_price(min_price, max_price, useTotalPrice, skusToFilter) {
+            const targetSkus = skusToFilter || this.skus;
+
+            const min = parseFloat(min_price);
+            const max = parseFloat(max_price);
+
+            if (isNaN(min) && isNaN(max)) {
+                return targetSkus;
+            }
+
+            return targetSkus.filter(sku => {
+                const price = useTotalPrice ? sku.price * sku.quantity : sku.price;
+                let passesMin = true;
+                if (!isNaN(min)) {
+                    passesMin = price >= min;
+                }
+                let passesMax = true;
+                if (!isNaN(max)) {
+                    passesMax = price <= max;
+                }
+                return passesMin && passesMax;
+            });
+        }
+
         // 根据当前选中的优惠券，筛选出适用的商品
         filter_skus_by_coupons() {
             const selectedCoupons = this.get_selected_coupons();
@@ -540,12 +564,25 @@
             return Array.from(applicableSkuIds).map(id => this.get_sku(id));
         }
 
-        // 根据当前选中的优惠券和促销活动，筛选出最终适用的商品
-        filter_skus_by_coupons_and_promotions() {
+        // 根据当前所有筛选条件（优惠券、促销、价格），筛选出最终适用的商品
+        filter_skus_by_all() {
+            // 1. 优惠券和促销筛选
             const filteredByCoupon = this.filter_skus_by_coupons();
             const filteredByPromo = this.filter_skus_by_promotions();
             const couponSkuIds = new Set(filteredByCoupon.map(s => s.id));
-            return filteredByPromo.filter(s => couponSkuIds.has(s.id));
+            const candidateSkus = filteredByPromo.filter(s => couponSkuIds.has(s.id));
+
+            // 2. 价格筛选
+            const minPriceInput = document.getElementById('min-price-input');
+            const maxPriceInput = document.getElementById('max-price-input');
+            const useTotalPriceCheckbox = document.getElementById('use-total-price-checkbox');
+
+            const minPrice = minPriceInput ? minPriceInput.value : null;
+            const maxPrice = maxPriceInput ? maxPriceInput.value : null;
+            // 如果UI还未创建，默认按总价
+            const useTotalPrice = useTotalPriceCheckbox ? useTotalPriceCheckbox.checked : true;
+
+            return this.filter_skus_by_price(minPrice, maxPrice, useTotalPrice, candidateSkus);
         }
 
         // --- Recommendation Algorithms ---
@@ -576,7 +613,7 @@
             // 2. 贪心填充
             const mandatorySkuIds = new Set(mandatorySkus.map(s => s.id));
             const blacklistSkuIds = new Set(this.recommend_blacklist_skus.map(s => s.id));
-            const availableSkus = this.filter_skus_by_coupons_and_promotions()
+            const availableSkus = this.filter_skus_by_all()
                 .filter(s => !mandatorySkuIds.has(s.id) && !blacklistSkuIds.has(s.id));
             availableSkus.sort((a, b) => b.price - a.price);
 
@@ -636,7 +673,7 @@
                 return;
             }
 
-            const availableSkus = this.filter_skus_by_coupons_and_promotions()
+            const availableSkus = this.filter_skus_by_all()
                 .filter(s => !mandatorySkuIds.has(s.id) && !blacklistSkuIds.has(s.id));
 
             const inputJSON = {
@@ -1102,8 +1139,11 @@
                 .plan-sku-quantity { position: absolute; bottom: 0; right: 2px; color: white; background: rgba(0,0,0,0.5); font-size: 11px; padding: 1px 2px; }
                 .remove-sku-btn { position: absolute; top: 0; right: 0; cursor: pointer; border: none; background: rgba(0,0,0,0.6); color: white; font-size: 12px; line-height: 1; padding: 2px 4px; }
                 .plan-info { margin-left: 20px; }
-                .plan-actions { margin-left: 20px; }
+                .plan-actions { margin-left: 20px; display: flex; flex-direction: column; gap: 5px; }
                 .plan-item.active { border-color: #e4393c; box-shadow: 0 0 5px rgba(228, 57, 60, 0.5); }
+                .price-filter-controls { display: flex; align-items: center; gap: 5px; }
+                .price-filter-controls input[type='number'] { width: 70px; border: 1px solid #ccc; padding: 4px 6px; border-radius: 3px; }
+                .price-filter-controls label { display: flex; align-items: center; cursor: pointer; user-select: none; }
             `);
         },
 
@@ -1223,7 +1263,7 @@
 
         // 应用所有SKU筛选器并更新UI
         applySkuFilters() {
-            const finalSkus = DataManager.cart.filter_skus_by_coupons_and_promotions();
+            const finalSkus = DataManager.cart.filter_skus_by_all();
 
             DataManager.cart.hide_all_skus();
             finalSkus.forEach(sku => {
@@ -1272,7 +1312,6 @@
             const getCouponsBtn = document.createElement('a');
             getCouponsBtn.href = '#none';
             getCouponsBtn.innerText = '获取优惠券';
-            getCouponsBtn.style.marginLeft = '10px';
             getCouponsBtn.addEventListener('click', (e) => {
                 e.preventDefault();
 
@@ -1318,7 +1357,6 @@
             const unselectAllBtn = document.createElement('a');
             unselectAllBtn.href = '#none';
             unselectAllBtn.innerText = '取消选中所有商品';
-            unselectAllBtn.style.marginLeft = '10px';
             unselectAllBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 DataManager.cart.unselect_all_skus();
@@ -1328,7 +1366,6 @@
             const unselectAllFiltersBtn = document.createElement('a');
             unselectAllFiltersBtn.href = '#none';
             unselectAllFiltersBtn.innerText = '取消选中所有优惠';
-            unselectAllFiltersBtn.style.marginLeft = '10px';
             unselectAllFiltersBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 DataManager.cart.unselect_all_coupons();
@@ -1341,7 +1378,6 @@
             const bargainBtn = document.createElement('a');
             bargainBtn.href = '#none';
             bargainBtn.innerText = '凑单';
-            bargainBtn.style.marginLeft = '10px';
             bargainBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 DataManager.cart.recommend_bargain_skus();
@@ -1351,7 +1387,6 @@
             const aiBargainBtn = document.createElement('a');
             aiBargainBtn.href = '#none';
             aiBargainBtn.innerText = 'AI凑单';
-            aiBargainBtn.style.marginLeft = '10px';
             aiBargainBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 DataManager.cart.llm_recommend_bargain_skus();
@@ -1363,6 +1398,53 @@
             operationDiv.appendChild(unselectAllFiltersBtn);
             operationDiv.appendChild(bargainBtn);
             operationDiv.appendChild(aiBargainBtn);
+
+            // 6. 创建价格筛选器
+            const priceFilterContainer = document.createElement('div');
+            priceFilterContainer.style.display = 'flex';
+
+            const toggleLink = document.createElement('a');
+            toggleLink.href = '#none';
+            toggleLink.innerText = '价格筛选';
+            priceFilterContainer.appendChild(toggleLink);
+
+            const controlsDiv = document.createElement('div');
+            controlsDiv.className = 'price-filter-controls hidden'; // 默认隐藏
+            controlsDiv.innerHTML = `
+                <input type="number" id="min-price-input" placeholder="最低价"">
+                -
+                <input type="number" id="max-price-input" placeholder="最高价"">
+                <label">
+                    <input type="checkbox" id="use-total-price-checkbox" checked>
+                    按总价
+                </label>
+                <button id="clear-price-filter-btn">清除</button>
+            `;
+            priceFilterContainer.appendChild(controlsDiv);
+
+            // 切换显示/隐藏
+            toggleLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                controlsDiv.classList.toggle('hidden');
+            });
+
+            // 绑定事件
+            const minPriceInput = controlsDiv.querySelector('#min-price-input');
+            const maxPriceInput = controlsDiv.querySelector('#max-price-input');
+            const useTotalPriceCheckbox = controlsDiv.querySelector('#use-total-price-checkbox');
+            const clearBtn = controlsDiv.querySelector('#clear-price-filter-btn');
+
+            [minPriceInput, maxPriceInput, useTotalPriceCheckbox].forEach(el => {
+                el.addEventListener('input', () => this.applySkuFilters());
+            });
+
+            clearBtn.addEventListener('click', () => {
+                minPriceInput.value = '';
+                maxPriceInput.value = '';
+                this.applySkuFilters();
+            });
+
+            operationDiv.appendChild(priceFilterContainer);
         },
 
         // 为每个商品行注入“添加至方案”按钮
@@ -1379,7 +1461,6 @@
                     addToPlanBtn.href = '#none';
                     addToPlanBtn.innerText = '添加至方案';
                     addToPlanBtn.className = 'add-to-plan-btn';
-                    addToPlanBtn.style.marginLeft = '10px';
                     addToPlanBtn.addEventListener('click', (e) => {
                         e.preventDefault();
                         const selectedPlan = DataManager.cart.get_selected_plan();
@@ -1394,7 +1475,6 @@
                     addToBlacklistBtn.href = '#none';
                     addToBlacklistBtn.innerText = '添加至黑名单';
                     addToBlacklistBtn.className = 'add-to-blacklist-btn';
-                    addToBlacklistBtn.style.marginLeft = '10px';
                     addToBlacklistBtn.addEventListener('click', (e) => {
                         e.preventDefault();
                         DataManager.cart.add_to_blacklist(sku);
@@ -1404,7 +1484,6 @@
                     removeFromBlacklistBtn.href = '#none';
                     removeFromBlacklistBtn.innerText = '移出黑名单';
                     removeFromBlacklistBtn.className = 'remove-from-blacklist-btn hidden'; // 默认隐藏
-                    removeFromBlacklistBtn.style.marginLeft = '10px';
                     removeFromBlacklistBtn.addEventListener('click', (e) => {
                         e.preventDefault();
                         DataManager.cart.remove_from_blacklist(sku);
@@ -1478,6 +1557,7 @@
                     <div>折扣: <span class="discount-percent">-</span></div>
                 </div>
                 <div class="plan-actions">
+                    <button class="quick-filter-btn">快筛</button>
                     <button class="remove-plan-btn">移除</button>
                 </div>
             `;
@@ -1501,8 +1581,31 @@
 
             planElement.querySelector('.remove-plan-btn').addEventListener('click', () => DataManager.cart.remove_plan(plan));
 
+            planElement.querySelector('.quick-filter-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+
+                if (plan.remaining >= 0) {
+                    this.showMessage("已满足优惠门槛，无需快筛。", "info");
+                    return;
+                }
+
+                const shortfall = -plan.remaining;
+                const minPriceInput = document.getElementById('min-price-input');
+                const maxPriceInput = document.getElementById('max-price-input');
+                const useTotalPriceCheckbox = document.getElementById('use-total-price-checkbox');
+
+                minPriceInput.value = (shortfall * 0.8).toFixed(2);
+                maxPriceInput.value = (shortfall * 1.2).toFixed(2);
+                useTotalPriceCheckbox.checked = true;
+
+                // 展开价格筛选器
+                document.querySelector('.price-filter-controls').classList.remove('hidden');
+
+                this.applySkuFilters();
+            });
+
             planElement.addEventListener('click', (e) => {
-                if (e.target.matches('.plan-apply-checkbox, .remove-plan-btn, .remove-sku-btn')) {
+                if (e.target.matches('.plan-apply-checkbox, .remove-plan-btn, .remove-sku-btn, .quick-filter-btn')) {
                     return;
                 }
                 DataManager.cart.select_plan(plan);

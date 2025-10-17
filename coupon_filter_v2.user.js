@@ -14,7 +14,7 @@
     'use strict';
 
     // --- 可配置常量 ---
-    const CLICK_DELAY = 800; // 领券点击延迟（毫秒）
+    const CLICK_DELAY = 1200; // 领券点击延迟（毫秒）
     const LLM_API_URL = ''; // 在此填入你的LLM API URL, 例如 https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
     const LLM_API_KEY = ''; // 在此填入你的LLM API KEY
     const LLM_MODEL = 'gemini-2.5-flash'; // 你希望使用的模型
@@ -345,7 +345,9 @@
             this.coupons = coupons || [];
             this.promotions = promotions || [];
             this.element = null;
+            this.max_quota = this._calculateMaxQuota();
             this.total_price = this._calculateTotalPrice();
+            this.remaining = this._calculateRemaining();
             this.real_price = 0; // 由UIManager异步更新
             this.selected = false; // 代替 is_active
         }
@@ -354,12 +356,22 @@
             return this.skus.reduce((total, sku) => total + (sku.price * sku.quantity), 0);
         }
 
+        _calculateMaxQuota() {
+            return Math.max(...this.coupons.map(c => c.quota));
+        }
+
+        _calculateRemaining() {
+            return this.total_price - this.max_quota;
+        }
+
         add_sku(sku) {
             if (sku && !this.skus.some(s => s.id === sku.id)) {
                 this.skus.push(sku);
                 this.total_price = this._calculateTotalPrice();
+                this.remaining = this._calculateRemaining();
                 if (typeof UIManager.addPlanSku === 'function') {
                     UIManager.addPlanSku(this, sku);
+                    UIManager.updatePlanPriceDisplay(this);
                 }
             }
         }
@@ -368,8 +380,10 @@
             if (!sku) return;
             this.skus = this.skus.filter(s => s.id !== sku.id);
             this.total_price = this._calculateTotalPrice();
+            this.remaining = this._calculateRemaining();
             if (typeof UIManager.removePlanSku === 'function') {
                 UIManager.removePlanSku(this, sku);
+                UIManager.updatePlanPriceDisplay(this);
             }
         }
 
@@ -786,8 +800,8 @@
                 let sku = this.cart.get_sku(itemData.Id);
                 if (!sku) {
                     let realPrice;
-                    if(itemData.PriceShow !== null){
-                        realPrice = parseFloat(itemData.PriceShow.replace(/[^\d.]/g, ''));
+                    if(itemData.priceJd !== null){
+                        realPrice = parseFloat(itemData.priceJd.replace(/[^\d.]/g, ''));
                     }else{
                         realPrice = itemData.Price;
                     }
@@ -1433,6 +1447,7 @@
                 <div class="plan-info">
                     <div>总价: <span class="total-price">${plan.total_price.toFixed(2)}</span></div>
                     <div>到手价: <span class="real-price">-</span></div>
+                    <div>差额: <span class="price-diff">${plan.remaining.toFixed(2)}</span></div>
                     <div>折扣: <span class="discount-percent">-</span></div>
                 </div>
                 <div class="plan-actions">
@@ -1525,12 +1540,16 @@
             const totalPriceEl = plan.element.querySelector('.total-price');
             const realPriceEl = plan.element.querySelector('.real-price');
             const discountEl = plan.element.querySelector('.discount-percent');
+            const priceDiffEl = plan.element.querySelector('.price-diff'); // Added
 
             if (totalPriceEl) {
                 totalPriceEl.textContent = `¥${plan.total_price.toFixed(2)}`;
             }
             if (realPriceEl && plan.real_price > 0) {
                 realPriceEl.textContent = `¥${plan.real_price.toFixed(2)}`;
+            }
+            if (priceDiffEl) {
+                priceDiffEl.textContent = `¥${plan.remaining.toFixed(2)}`;
             }
             if (discountEl && plan.total_price > 0 && plan.real_price > 0) {
                 const discountPercent = (plan.real_price / plan.total_price) * 100;

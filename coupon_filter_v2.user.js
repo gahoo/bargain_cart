@@ -674,7 +674,7 @@
             }
 
             const availableSkus = this.filter_skus_by_all()
-                .filter(s => !mandatorySkuIds.has(s.id) && !blacklistSkuIds.has(s.id));
+                .filter(s => !blacklistSkuIds.has(s.id));
 
             const inputJSON = {
                 available_skus: availableSkus.map(s => ({ id: s.id, name: s.name, price: s.price, quantity: s.quantity })),
@@ -722,7 +722,7 @@
                     const planSkus = planData.sku_ids.map(id => this.get_sku(String(id))).filter(Boolean);
                     const planCoupons = planData.coupon_ids.map(id => this.get_coupon(id)).filter(Boolean);
                     const planPromos = planData.promotion_ids.map(id => this.get_promotion(id)).filter(Boolean);
-                    const aiPlan = new Plan(planData.plan_id || `ai-${Date.now()}`, planSkus, planCoupons, planPromos);
+                    const aiPlan = new Plan(`ai-${Date.now()}`, planSkus, planCoupons, planPromos);
                     this.add_plan(aiPlan);
                 }
 

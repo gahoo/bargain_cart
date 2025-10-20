@@ -1003,6 +1003,41 @@
         processCartUnCheckAll(data) {
             const selectedSkuIds = this.getCartSkuSelection(data);
             this.updateCartSkuSelection(selectedSkuIds);
+        },
+
+        processChangeSkuNum(data) {
+            console.log("Processing Sku Quantity Change:", data);
+            if (!data?.resultData?.cartInfo?.vendors) {
+                console.error("Invalid cart data structure for quantity change");
+                return;
+            }
+
+            const handleItemQuantity = (itemData) => {
+                if (!itemData || !itemData.Id || itemData.Num === undefined) return;
+
+                const sku = this.cart.get_sku(itemData.Id);
+                if (sku && sku.quantity !== itemData.Num) {
+                    sku.quantity = itemData.Num;
+                    console.log(`[DataManager] Updated SKU ${sku.id} quantity to ${itemData.Num}`);
+                }
+            };
+
+            for (const vendor of data.resultData.cartInfo.vendors) {
+                if (!vendor.sorted) continue;
+
+                for (const sortItem of vendor.sorted) {
+                    // Handle container items like sets/promos
+                    if (sortItem.item?.items?.length > 0) {
+                        for (const subItem of sortItem.item.items) {
+                            handleItemQuantity(subItem.item);
+                        }
+                    }
+                    // Handle single items
+                    else if (sortItem.item) {
+                        handleItemQuantity(sortItem.item);
+                    }
+                }
+            }
         }
     };
 
@@ -1015,7 +1050,8 @@
             'pcCart_jc_cartCouponList': DataManager.processCouponData.bind(DataManager),
             'pcCart_jc_cartCheckSingle': DataManager.processCartCheckSingle.bind(DataManager),
             'pcCart_jc_cartUnCheckSingle': DataManager.processCartUnCheckSingle.bind(DataManager),
-            'pcCart_jc_cartUnCheckAll': DataManager.processCartUnCheckAll.bind(DataManager)
+            'pcCart_jc_cartUnCheckAll': DataManager.processCartUnCheckAll.bind(DataManager),
+            'pcCart_jc_changeSkuNum': DataManager.processChangeSkuNum.bind(DataManager)
         },
 
         init() {
